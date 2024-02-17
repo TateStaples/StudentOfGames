@@ -7,3 +7,5 @@ mod mcts;
 pub mod policies;
 pub mod prelude;
 mod utils;
+mod cfr;
+mod SoG;

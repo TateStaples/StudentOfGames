@@ -6,9 +6,7 @@ use crate::utils::*;
 use rand::prelude::{Rng, SeedableRng, StdRng};
 use tch::nn::VarStore;
 
-pub fn evaluator<G: Game<N>, P: Policy<G, N> + NNPolicy<G, N>, const N: usize>(
-    cfg: &EvaluationConfig,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub fn evaluator<G: Game<N>, P: Policy<G, N> + NNPolicy<G, N>, const N: usize>(cfg: &EvaluationConfig) -> Result<(), Box<dyn std::error::Error>> {
     std::thread::sleep(std::time::Duration::from_secs(1));
 
     let models_dir = cfg.logs.join("models");

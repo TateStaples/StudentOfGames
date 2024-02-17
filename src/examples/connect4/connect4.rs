@@ -12,8 +12,8 @@ use synthesis::game::*;
 +----------------------------+
 */
 
-const WIDTH: usize = 9;
-const HEIGHT: usize = 7;
+const WIDTH: usize = 7;
+const HEIGHT: usize = 6;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PlayerId {
@@ -53,8 +53,6 @@ const COLS: [u64; WIDTH] = [
     FAB_COL << (7 * 4),
     FAB_COL << (7 * 5),
     FAB_COL << (7 * 6),
-    FAB_COL << (7 * 7),
-    FAB_COL << (7 * 8),
 ];
 
 const ROWS: [u64; HEIGHT] = [
@@ -64,11 +62,10 @@ const ROWS: [u64; HEIGHT] = [
     FAB_ROW << 3,
     FAB_ROW << 4,
     FAB_ROW << 5,
-    FAB_ROW << 6,
 ];
 
 const D1_MASK: u64 = (COLS[0] | COLS[1] | COLS[2] | COLS[3] | COLS[4] | COLS[5])
-    & (ROWS[3] | ROWS[4] | ROWS[5] | ROWS[6]);
+    & (ROWS[3] | ROWS[4] | ROWS[5]);
 const D2_MASK: u64 = (COLS[0] | COLS[1] | COLS[2] | COLS[3] | COLS[4] | COLS[5])
     & (ROWS[0] | ROWS[1] | ROWS[2] | ROWS[3]);
 const H_MASK: u64 = COLS[0] | COLS[1] | COLS[2] | COLS[3] | COLS[4] | COLS[5];
@@ -81,29 +78,6 @@ const fn won(bb: u64) -> bool {
     let v = bb & (bb >> 1) & (bb >> 2) & (bb >> 3) & V_MASK;
     v + h + d1 + d2 > 0
 }
-
-/*
-
-use std::arch::x86_64::*;
-
-fn fast_won(bb: u64) -> bool {
-    unsafe {
-        let bbx4 = _mm256_set1_epi64x(bb as i64);
-        let maskx4 = _mm256_set_epi64x(D1_MASK as i64, D2_MASK as i64, H_MASK as i64, V_MASK as i64);
-        let shift1 = _mm256_set_epi64x(6, 8, 7, 1);
-        let shift2 = _mm256_set_epi64x(12, 16, 14, 2);
-        let shift3 = _mm256_set_epi64x(18, 24, 21, 3);
-        let a = _mm256_and_si256(bbx4, maskx4);
-        let b = _mm256_srlv_epi64(bbx4, shift1);
-        let c = _mm256_and_si256(a, b);
-        let d = _mm256_srlv_epi64(bbx4, shift2);
-        let e = _mm256_and_si256(c, d);
-        let f = _mm256_srlv_epi64(bbx4, shift3);
-        let res = _mm256_testz_si256(e, f);
-        res == 0
-    }
-}
-*/
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct Connect4 {

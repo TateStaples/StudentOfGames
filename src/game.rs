@@ -7,7 +7,7 @@ pub trait HasTurnOrder: Eq + Clone + Copy + std::fmt::Debug {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum Outcome {
+pub enum Outcome {  // usize is the number of terms until win todo: update to EV
     Win(usize),
     Lose(usize),
     Draw(usize),
@@ -65,8 +65,8 @@ impl PartialOrd for Outcome {
     }
 }
 
-pub trait Game<const N: usize>: Eq + Hash + Clone + std::fmt::Debug + Send {
-    type PlayerId: HasTurnOrder;
+pub trait Game<const N: usize>: Eq + Hash + Clone + std::fmt::Debug + Send {  // TODO: add documentation
+    type PlayerId: HasTurnOrder;  // The playerId enum must have .next() and .prev()
     type Action: Eq + Clone + Copy + std::fmt::Debug + Into<usize> + From<usize>;
     type ActionIterator: Iterator<Item = Self::Action>;
     type Features: PartialEq + Clone + std::fmt::Debug + Send;
@@ -77,14 +77,14 @@ pub trait Game<const N: usize>: Eq + Hash + Clone + std::fmt::Debug + Send {
     const NUM_PLAYERS: usize;
     const DIMS: &'static [i64];
 
-    fn new() -> Self;
-    fn player(&self) -> Self::PlayerId;
+    fn new() -> Self;  // Default initialization
+    fn player(&self) -> Self::PlayerId;  // The active player
     fn is_over(&self) -> bool;
-    fn reward(&self, player_id: Self::PlayerId) -> f32;
+    fn reward(&self, player_id: Self::PlayerId) -> f32;  // The reward for the player getting to active state. Typically terminal nodes
     fn iter_actions(&self) -> Self::ActionIterator;
-    fn step(&mut self, action: &Self::Action) -> bool;
-    fn features(&self) -> Self::Features;
-    fn print(&self);
+    fn step(&mut self, action: &Self::Action) -> bool;  // Implement action and return whether done
+    fn features(&self) -> Self::Features;  // TODO: figure out how this works
+    fn print(&self);  // Output the game state
 }
 
 #[cfg(test)]

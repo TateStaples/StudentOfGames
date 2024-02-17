@@ -154,8 +154,8 @@ fn gather_experience<G: 'static + Game<N>, P: Policy<G, N> + NNPolicy<G, N>, con
     }
 
     // sanity check that all games are scheduled
-    assert!(games_to_schedule == 0);
-    assert!(workers_left == 0);
+    assert_eq!(games_to_schedule, 0);
+    assert_eq!(workers_left, 0);
 
     // wait for workers to complete
     multi_bar.join().unwrap();

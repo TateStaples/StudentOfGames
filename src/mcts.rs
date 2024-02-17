@@ -1,5 +1,6 @@
+use crate::prelude::Game;
 use crate::config::{ActionSelection, Exploration, Fpu, MCTSConfig, PolicyNoise};
-use crate::game::{Game, Outcome};
+use crate::game::{Outcome};
 use crate::policies::Policy;
 use rand::{distributions::Distribution, thread_rng, Rng};
 use rand_distr::Dirichlet;
@@ -30,26 +31,20 @@ struct Node<G: Game<N>, const N: usize> {
     parent: NodeId,            // 4 bytes
     first_child: NodeId,       // 4 bytes
     num_children: u8,          // 1 byte
-    game: G,                   // ? bytes
-    solution: Option<Outcome>, // 1 byte
+    game: G,                   // ? bytes   - FIXME, should this be a reference?
+    solution: Option<Outcome>, // 1 byte    - possible definitive termination result
     action: ActionId,          // 1 byte
     action_prob: f32,          // 4 bytes
-    outcome_probs: [f32; 3],
-    num_visits: f32, // 4 bytes
+    outcome_probs: [f32; 3],    // 12 bytes - FIXME: is this always in [0, 1]?
+    num_visits: f32,            // 4 bytes  - FIXME, should this be int
 }
 
 impl<G: Game<N>, const N: usize> Node<G, N> {
-    fn q(&self) -> f32 {
-        (self.outcome_probs[2] - self.outcome_probs[0]) / self.num_visits
-    }
-
-    fn unvisited(
-        parent: NodeId,
-        game: G,
-        solution: Option<Outcome>,
-        action: u8,
-        action_prob: f32,
-    ) -> Self {
+    // expected quality of node
+    fn q(&self) -> f32 { (self.outcome_probs[2] - self.outcome_probs[0]) / self.num_visits }  // quality of node, given by excess wins divided by visits
+    
+    // Create new unvisited node
+    fn unvisited(parent: NodeId, game: G, solution: Option<Outcome>, action: u8, action_prob: f32) -> Self {
         Self {
             parent,
             first_child: 0,
@@ -65,7 +60,7 @@ impl<G: Game<N>, const N: usize> Node<G, N> {
 
     fn action(&self) -> G::Action {
         (self.action as usize).into()
-    }
+    } // ActionId -> Action
 
     #[inline]
     fn is_unvisited(&self) -> bool {
@@ -85,10 +80,11 @@ impl<G: Game<N>, const N: usize> Node<G, N> {
     #[inline]
     fn last_child(&self) -> NodeId {
         self.first_child + self.num_children as u32
-    }
+    }  // how is this reserved
 
     #[inline]
     fn mark_visited(&mut self, first_child: NodeId, num_children: u8) {
+        assert!(self.is_unvisited());
         self.first_child = first_child;
         self.num_children = num_children;
     }
@@ -103,23 +99,17 @@ pub struct MCTS<'a, G: Game<N>, P: Policy<G, N>, const N: usize> {
     root: NodeId,
     offset: NodeId,
     nodes: Vec<Node<G, N>>,
-    policy: &'a mut P,
+    policy: &'a mut P,  //
     cfg: MCTSConfig,
 }
 
 impl<'a, G: Game<N>, P: Policy<G, N>, const N: usize> MCTS<'a, G, P, N> {
-    pub fn exploit(
-        explores: usize,
-        cfg: MCTSConfig,
-        policy: &'a mut P,
-        game: G,
-        action_selection: ActionSelection,
-    ) -> G::Action {
+    pub fn exploit(explores: usize, cfg: MCTSConfig, policy: &'a mut P, game: G, action_selection: ActionSelection) -> G::Action {
         let mut mcts = Self::with_capacity(explores + 1, cfg, policy, game);
-        mcts.explore_n(explores);
-        mcts.best_action(action_selection)
+        mcts.explore_n(explores);  // creates 'explores' nodes
+        mcts.best_action(action_selection)  // creates the +1 node
     }
-
+    // RAM allocate node space
     pub fn with_capacity(capacity: usize, cfg: MCTSConfig, policy: &'a mut P, game: G) -> Self {
         let mut nodes = Vec::with_capacity(capacity);
         nodes.push(Node::unvisited(0, game, None, 0, 0.0));
@@ -136,6 +126,7 @@ impl<'a, G: Game<N>, P: Policy<G, N>, const N: usize> MCTS<'a, G, P, N> {
         mcts
     }
 
+    // Search the space
     pub fn explore_n(&mut self, n: usize) {
         for _ in 0..n {
             // NOTE this is important for value extraction because if root is solved then children might not have any visits
@@ -145,35 +136,32 @@ impl<'a, G: Game<N>, P: Policy<G, N>, const N: usize> MCTS<'a, G, P, N> {
             self.explore();
         }
     }
-}
-
-impl<'a, G: Game<N>, P: Policy<G, N>, const N: usize> MCTS<'a, G, P, N> {
+    // --------- GETTERS --------- //
     fn next_node_id(&self) -> NodeId {
         self.nodes.len() as NodeId + self.offset
     }
 
-    fn node(&self, node_id: NodeId) -> &Node<G, N> {
+    fn node(&self, node_id: NodeId) -> &Node<G, N> {   // get_node: nodeId -> Node
         &self.nodes[(node_id - self.offset) as usize]
     }
 
-    fn mut_node(&mut self, node_id: NodeId) -> &mut Node<G, N> {
+    fn mut_node(&mut self, node_id: NodeId) -> &mut Node<G, N> {  // nodeID -> &mut Node
         &mut self.nodes[(node_id - self.offset) as usize]
     }
 
     fn children_of(&self, node: &Node<G, N>) -> &[Node<G, N>] {
-        &self.nodes
-            [(node.first_child - self.offset) as usize..(node.last_child() - self.offset) as usize]
+        &self.nodes[(node.first_child - self.offset) as usize..(node.last_child() - self.offset) as usize]
     }
 
     fn mut_nodes(&mut self, first_child: NodeId, last_child: NodeId) -> &mut [Node<G, N>] {
         &mut self.nodes[(first_child - self.offset) as usize..(last_child - self.offset) as usize]
     }
-}
 
-impl<'a, G: Game<N>, P: Policy<G, N>, const N: usize> MCTS<'a, G, P, N> {
+    // --------- GAME STATE --------- //
+    // Fill array with visit rate of each action
     pub fn target_policy(&self, search_policy: &mut [f32; N]) {
-        search_policy.fill(0.0);
-        let mut total = 0.0;
+        search_policy.fill(0.0);  // initialize
+        let mut total = 0.0;  // TODO: what is this
         let root = self.node(self.root);
         if root.num_visits == 1.0 {
             // assert!(root.solution.is_some());
@@ -197,7 +185,6 @@ impl<'a, G: Game<N>, P: Policy<G, N>, const N: usize> MCTS<'a, G, P, N> {
                 }
             }
         } else {
-            // assert!(root.num_visits > 1.0);
             for child in self.children_of(root) {
                 let v = child.num_visits;
                 search_policy[child.action as usize] = v;
@@ -210,6 +197,7 @@ impl<'a, G: Game<N>, P: Policy<G, N>, const N: usize> MCTS<'a, G, P, N> {
         }
     }
 
+    // Get the outcome probabilities FIXME: this only applies on discrete outcome games
     pub fn target_q(&self) -> [f32; 3] {
         let root = self.node(self.root);
         match root.solution {
@@ -223,9 +211,7 @@ impl<'a, G: Game<N>, P: Policy<G, N>, const N: usize> MCTS<'a, G, P, N> {
             }
         }
     }
-}
-
-impl<'a, G: Game<N>, P: Policy<G, N>, const N: usize> MCTS<'a, G, P, N> {
+    // --------- NOISE --------- //
     fn add_root_noise(&mut self) {
         match self.cfg.root_policy_noise {
             PolicyNoise::None => {}
@@ -267,15 +253,13 @@ impl<'a, G: Game<N>, P: Policy<G, N>, const N: usize> MCTS<'a, G, P, N> {
             child.action_prob = child.action_prob * (1.0 - noise_weight) + noise_weight * noise;
         }
     }
-}
-
-impl<'a, G: Game<N>, P: Policy<G, N>, const N: usize> MCTS<'a, G, P, N> {
+    // --------- Solvers --------- //
     pub fn best_action(&self, action_selection: ActionSelection) -> G::Action {
         let root = self.node(self.root);
 
         let mut best_action = None;
         let mut best_value = None;
-        for child in self.children_of(root) {
+        for child in self.children_of(root) {   // TODO could this be a max()?
             let value = match child.solution {
                 Some(Outcome::Win(turns)) => Some((0.0, turns as f32)),
                 None => match action_selection {
@@ -290,7 +274,7 @@ impl<'a, G: Game<N>, P: Policy<G, N>, const N: usize> MCTS<'a, G, P, N> {
                 best_action = Some(child.action());
             }
         }
-        best_action.unwrap()
+        best_action.unwrap()  // TODO: make this better
     }
 
     pub fn solution(&self, action: &G::Action) -> Option<Outcome> {
@@ -304,27 +288,25 @@ impl<'a, G: Game<N>, P: Policy<G, N>, const N: usize> MCTS<'a, G, P, N> {
         }
         None
     }
-}
 
-impl<'a, G: Game<N>, P: Policy<G, N>, const N: usize> MCTS<'a, G, P, N> {
     fn explore(&mut self) {
         let mut node_id = self.root;
         loop {
             let node = self.node(node_id);
             if let Some(outcome) = node.solution {
-                self.backprop(node_id, outcome.into(), true);
+                self.backprop(node_id, outcome.into(), true);  // update with solution
                 return;
-            } else if node.is_unvisited() {
+            } else if node.is_unvisited() {  // update with heuristic
                 let (node_id, outcome_probs, any_solved) = self.visit(node_id);
                 self.backprop(node_id, outcome_probs, any_solved);
                 return;
             } else {
-                node_id = self.select_best_child(node);
+                node_id = self.select_best_child(node);  // go deeper
             }
         }
     }
 
-    fn select_best_child(&self, parent: &Node<G, N>) -> NodeId {
+    fn select_best_child(&self, parent: &Node<G, N>) -> NodeId {  // TODO: replace with option
         let mut best_child_id = None;
         let mut best_value = None;
         for child_id in parent.first_child..parent.last_child() {
@@ -372,8 +354,8 @@ impl<'a, G: Game<N>, P: Policy<G, N>, const N: usize> MCTS<'a, G, P, N> {
     }
 
     fn visit(&mut self, node_id: NodeId) -> (NodeId, [f32; 3], bool) {
-        let first_child = self.next_node_id();
         let node = self.node(node_id);
+        let first_child = self.next_node_id();
         if let Some(outcome) = node.solution {
             return (node_id, outcome.into(), true);
         }
@@ -404,8 +386,8 @@ impl<'a, G: Game<N>, P: Policy<G, N>, const N: usize> MCTS<'a, G, P, N> {
         if self.cfg.auto_extend && num_children == 1 {
             return self.visit(first_child);
         } else {
-            let (logits, outcome_probs) = self.policy.eval(&game);
-
+            let (logits, outcome_probs) = self.policy.eval(&game);  // todo: understand what logits are.
+            // fixme: this seems like it can be streamlined
             // stable softmax
             let mut max_logit = f32::NEG_INFINITY;
             for child in self.mut_nodes(first_child, last_child) {
@@ -426,7 +408,7 @@ impl<'a, G: Game<N>, P: Policy<G, N>, const N: usize> MCTS<'a, G, P, N> {
         }
     }
 
-    fn backprop(&mut self, leaf_node_id: NodeId, mut outcome_probs: [f32; 3], mut solved: bool) {
+    fn backprop(&mut self, leaf_node_id: NodeId, mut outcome_logits: [f32; 3], mut solved: bool) {
         let mut node_id = leaf_node_id;
         loop {
             let node = self.node(node_id);
@@ -449,40 +431,42 @@ impl<'a, G: Game<N>, P: Policy<G, N>, const N: usize> MCTS<'a, G, P, N> {
                     node.mark_solved(Outcome::Win(in_turns));
                     if correct_values {
                         for i in 0..3 {
-                            outcome_probs[i] = -node.outcome_probs[i];
+                            outcome_logits[i] = -node.outcome_probs[i];
                         }
-                        outcome_probs[2] += node.num_visits + 1.0;
+                        outcome_logits[2] += node.num_visits + 1.0;
                     }
-                } else if best_solution.is_some() && all_solved {
+                }
+                else if best_solution.is_some() && all_solved {
                     // all children node's are proven losses or draws
                     let best_outcome = best_solution.unwrap();
                     node.mark_solved(best_outcome);
                     if correct_values {
                         for i in 0..3 {
-                            outcome_probs[i] = -node.outcome_probs[i];
+                            outcome_logits[i] = -node.outcome_probs[i];
                         }
                         if let Outcome::Draw(_) = best_outcome {
-                            outcome_probs[1] += node.num_visits + 1.0;
+                            outcome_logits[1] += node.num_visits + 1.0;
                         } else {
-                            outcome_probs[0] += node.num_visits + 1.0;
+                            outcome_logits[0] += node.num_visits + 1.0;
                         }
                     }
-                } else {
+                }
+                else {
                     solved = false;
                 }
             }
 
             let node = self.mut_node(node_id);
             for i in 0..3 {
-                node.outcome_probs[i] += outcome_probs[i];
+                node.outcome_probs[i] += outcome_logits[i];
             }
             node.num_visits += 1.0;
             if node_id == self.root {
                 break;
             }
-            let t = outcome_probs[0];
-            outcome_probs[0] = outcome_probs[2];
-            outcome_probs[2] = t;
+            let t = outcome_logits[0];
+            outcome_logits[0] = outcome_logits[2];
+            outcome_logits[2] = t;
             node_id = parent;
         }
     }
@@ -620,7 +604,7 @@ mod tests {
         }
 
         fn is_over(&self) -> bool {
-            self.won(self.player) || self.won(self.player.prev()) || self.turn == 9
+            self.won(self.player) || self.won(self.player.prev()) || self.turn == Self::MAX_TURNS
         }
 
         fn reward(&self, player_id: Self::PlayerId) -> f32 {
@@ -639,7 +623,7 @@ mod tests {
                 i: 0,
             }
         }
-        fn step(&mut self, action: &Self::Action) -> bool {
+        fn step(&mut self, action: &Self::Action) -> bool {  // TODO: replace this with a result
             assert!(action.row < 3);
             assert!(action.col < 3);
             assert!(self.board[action.row][action.col].is_none());

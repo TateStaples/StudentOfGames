@@ -113,7 +113,7 @@ pub struct ReplayBuffer<G: Game<N>, const N: usize> {
     pub vs: Vec<[f32; 3]>,
 }
 
-impl<G: Game<N>, const N: usize> ReplayBuffer<G, N> {
+impl<G: Game<N>, const N: usize> ReplayBuffer<G, N> {  // TODO: figure this out
     pub fn new(n: usize) -> Self {
         Self {
             game_id: 0,

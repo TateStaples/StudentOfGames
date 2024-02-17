@@ -7,7 +7,7 @@ pub enum ValueTarget {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum Exploration {
+pub enum Exploration {  // TODO: figure out where this is from
     Uct { c: f32 },
     PolynomialUct { c: f32 },
 }

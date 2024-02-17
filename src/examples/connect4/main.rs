@@ -8,8 +8,7 @@ use crate::connect4::Connect4;
 use crate::policies::*;
 use synthesis::prelude::*;
 
-fn learn<G: 'static + Game<N>, P: Policy<G, N> + NNPolicy<G, N>, const N: usize>(
-) -> Result<(), Box<dyn std::error::Error>> {
+fn learn<G: 'static + Game<N>, P: Policy<G, N> + NNPolicy<G, N>, const N: usize>() -> Result<(), Box<dyn std::error::Error>> {
     let cfg = LearningConfig {
         seed: 0,                              // seed for rng & torch
         logs: train_dir("./_logs", G::NAME)?, // log directory
