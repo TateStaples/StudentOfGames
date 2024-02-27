@@ -13,9 +13,7 @@ use tch::{
     nn::{Adam, OptimizerConfig, VarStore},
 };
 
-pub fn alpha_zero<G: 'static + Game<N>, P: Policy<G, N> + NNPolicy<G, N>, const N: usize>(
-    cfg: &LearningConfig,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub fn alpha_zero<G: 'static + Game<N>, P: Policy<G, N> + NNPolicy<G, N>, const N: usize>(cfg: &LearningConfig) -> Result<(), Box<dyn std::error::Error>> {
     // set up directory structure
     std::fs::create_dir_all(&cfg.logs)?;
     let models_dir = cfg.logs.join("models");
@@ -117,12 +115,7 @@ pub fn alpha_zero<G: 'static + Game<N>, P: Policy<G, N> + NNPolicy<G, N>, const 
     Ok(())
 }
 
-fn gather_experience<G: 'static + Game<N>, P: Policy<G, N> + NNPolicy<G, N>, const N: usize>(
-    cfg: &LearningConfig,
-    policy_name: String,
-    buffer: &mut ReplayBuffer<G, N>,
-    seed: usize,
-) {
+fn gather_experience<G: 'static + Game<N>, P: Policy<G, N> + NNPolicy<G, N>, const N: usize>(cfg: &LearningConfig, policy_name: String, buffer: &mut ReplayBuffer<G, N>, seed: usize) {
     let mut games_to_schedule = cfg.games_per_train;
     let mut workers_left = cfg.rollout_cfg.num_workers + 1;
     let mut handles = Vec::with_capacity(workers_left);
@@ -178,13 +171,7 @@ fn styled_progress_bar(n: usize) -> ProgressBar {
     bar
 }
 
-fn run_n_games<G: Game<N>, P: Policy<G, N> + NNPolicy<G, N>, const N: usize>(
-    cfg: LearningConfig,
-    policy_name: String,
-    num_games: usize,
-    progress_bar: ProgressBar,
-    seed: usize,
-) -> ReplayBuffer<G, N> {
+fn run_n_games<G: Game<N>, P: Policy<G, N> + NNPolicy<G, N>, const N: usize>(cfg: LearningConfig, policy_name: String, num_games: usize, progress_bar: ProgressBar, seed: usize, ) -> ReplayBuffer<G, N> {
     let mut buffer = ReplayBuffer::new(G::MAX_TURNS * num_games);
     let mut rng = StdRng::seed_from_u64(seed as u64);
 

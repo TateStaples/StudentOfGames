@@ -29,12 +29,7 @@ pub fn git_diff() -> std::io::Result<String> {
     })
 }
 
-pub fn add_pgn_result(
-    pgn: &mut File,
-    white_name: &String,
-    black_name: &String,
-    white_reward: f32,
-) -> std::io::Result<()> {
+pub fn add_pgn_result(pgn: &mut File, white_name: &String, black_name: &String, white_reward: f32) -> std::io::Result<()> {
     write!(pgn, "[White \"{}\"]\n", white_name)?;
     write!(pgn, "[Black \"{}\"]\n", black_name)?;
     let result = if white_reward == 1.0 {

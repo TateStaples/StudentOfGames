@@ -307,6 +307,7 @@ impl<'a, G: Game<N>, P: Policy<G, N>, const N: usize> MCTS<'a, G, P, N> {
     }
 
     fn select_best_child(&self, parent: &Node<G, N>) -> NodeId {  // TODO: replace with option
+        // This might be functional with max() and a custom comparator
         let mut best_child_id = None;
         let mut best_value = None;
         for child_id in parent.first_child..parent.last_child() {
@@ -339,7 +340,7 @@ impl<'a, G: Game<N>, P: Policy<G, N>, const N: usize> MCTS<'a, G, P, N> {
             -child.q()
         }
     }
-
+    // the value of the node during exploration. Normalizes frequently visited nodes
     fn explore_value(&self, parent: &Node<G, N>, child: &Node<G, N>) -> f32 {
         match self.cfg.exploration {
             Exploration::Uct { c } => {
@@ -386,7 +387,7 @@ impl<'a, G: Game<N>, P: Policy<G, N>, const N: usize> MCTS<'a, G, P, N> {
         if self.cfg.auto_extend && num_children == 1 {
             return self.visit(first_child);
         } else {
-            let (logits, outcome_probs) = self.policy.eval(&game);  // todo: understand what logits are.
+            let (logits, outcome_probs) = self.policy.eval(&game);
             // fixme: this seems like it can be streamlined
             // stable softmax
             let mut max_logit = f32::NEG_INFINITY;
