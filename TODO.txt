@@ -1,6 +1,0 @@
-Rock Paper Scissors
-Tic Tac Toe
-Connect 4
-Poker
-Chess
-Go

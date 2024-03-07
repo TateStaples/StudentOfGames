@@ -90,14 +90,14 @@ pub fn tensor<T>(data: &[T], dims: &[i64], kind: tch::Kind) -> Tensor {
 }
 
 pub struct FlatBatch<G: Game<N>, const N: usize> {
-    pub states: Vec<G::Features>,
+    pub states: Vec<G::PublicInformation>,
     pub pis: Vec<[f32; N]>,
     pub vs: Vec<[f32; 3]>,
 }
 
 #[derive(Debug)]
 struct StateStatistics<G: Game<N>, const N: usize> {
-    state: G::Features,
+    state: G::PublicInformation,
     sum_pi: [f32; N],
     sum_v: [f32; 3],
     num: u32,
@@ -108,12 +108,12 @@ pub struct ReplayBuffer<G: Game<N>, const N: usize> {
     steps: usize,
     game_ids: Vec<usize>,
     pub games: Vec<G>,
-    pub states: Vec<G::Features>,
+    pub states: Vec<G::PublicInformation>,
     pub pis: Vec<[f32; N]>,
     pub vs: Vec<[f32; 3]>,
 }
 
-impl<G: Game<N>, const N: usize> ReplayBuffer<G, N> {  // TODO: figure this out
+impl<G: Game<N>, const N: usize> ReplayBuffer<G, N> {
     pub fn new(n: usize) -> Self {
         Self {
             game_id: 0,
@@ -148,11 +148,11 @@ impl<G: Game<N>, const N: usize> ReplayBuffer<G, N> {  // TODO: figure this out
         self.vs.len()
     }
 
-    pub fn add(&mut self, game: &G, pi: &[f32; N], v: [f32; 3]) {
+    pub fn add(&mut self, game: &G, pi: &[f32; N], v: [f32; 3]) {  // policy and value
         self.game_ids.push(self.game_id);
         self.steps += 1;
         self.games.push(game.clone());
-        self.states.push(game.features());
+        self.states.push(game.public_information());
         self.pis.push(*pi);
         self.vs.push(v);
     }

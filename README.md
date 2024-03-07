@@ -9,6 +9,7 @@ A general purpose games solver for imperfect information and stochastic games us
 ### AlphaZero
 
 ### CFR
+Counter factual Regret Minimization
 
 ### Student of Games
 #### CFR+
@@ -40,20 +41,30 @@ A general purpose games solver for imperfect information and stochastic games us
 - Modified Continual-Resolving: repeated safe resolving (from prev sol and opp CFR values)
 
 ## Questions:
-1. How to pass regret down and counterfactual values up through chance nodes? -> Zeroing impossible hands and add logits?
+1. How to handle terminal states in the game tree?
 2. Figure out how DeepStack modified continual-resolving works
 3. How to structure the transition function
 4. In AlphaZero, does self-play share game tree?
 
 ## In Progress
-- Implement the SoG::learn
-- Add noise
+- Implement a consistent way to handle the game tree
 - Implement the modified_resolving
-- Parallelize self-play, regret/grow -> linear, batched training, query solver
+- Implement the Bayesian pass through
+- Add noise
 - Check the Licence for the code
+- Implementing games for testing and fun 
+- Maybe reimplement the QuerySolver
 
 ## Goals
 - [ ] Expand to multiplayer games
 - [ ] Hierarchical Information State
 - [ ] Support for non-rivalrous games
 - [ ] Support for imitation learning starting point
+
+## Games
+- Tic Tac Toe
+- Connect 4
+- Poker
+- Chess
+- Go
+- Rock Paper Scissors

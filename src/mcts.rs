@@ -8,24 +8,6 @@ use rand_distr::Dirichlet;
 type NodeId = u32;
 type ActionId = u8;
 
-impl Into<usize> for Outcome {
-    fn into(self) -> usize {
-        match self {
-            Outcome::Lose(_) => 0,
-            Outcome::Draw(_) => 1,
-            Outcome::Win(_) => 2,
-        }
-    }
-}
-
-impl Into<[f32; 3]> for Outcome {
-    fn into(self) -> [f32; 3] {
-        let mut dist = [0.0; 3];
-        dist[Into::<usize>::into(self)] = 1.0;
-        dist
-    }
-}
-
 #[derive(Debug)]
 struct Node<G: Game<N>, const N: usize> {
     parent: NodeId,            // 4 bytes
@@ -584,7 +566,7 @@ mod tests {
         type PlayerId = PlayerId;
         type Action = Action;
         type ActionIterator = ActionIterator;
-        type Features = [[[f32; 3]; 3]; 3];
+        type PublicInformation = [[[f32; 3]; 3]; 3];
 
         const MAX_NUM_ACTIONS: usize = 9;
         const MAX_TURNS: usize = 9;
@@ -634,7 +616,7 @@ mod tests {
             self.is_over()
         }
 
-        fn features(&self) -> Self::Features {
+        fn public_information(&self) -> Self::PublicInformation {
             let mut s = [[[0.0; 3]; 3]; 3];
             for row in 0..3 {
                 for col in 0..3 {

@@ -1,6 +1,6 @@
 use crate::config::{LearningConfig, RolloutConfig, ValueTarget};
 use crate::data::*;
-use crate::game::{Game, Outcome};
+use crate::game::{Game};
 use crate::mcts::MCTS;
 use crate::policies::{NNPolicy, Policy, PolicyWithCache};
 use crate::utils::*;
