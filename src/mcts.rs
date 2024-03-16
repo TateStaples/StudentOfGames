@@ -10,15 +10,15 @@ type ActionId = u8;
 
 #[derive(Debug)]
 struct Node<G: Game<N>, const N: usize> {
-    parent: NodeId,            // 4 bytes
-    first_child: NodeId,       // 4 bytes
+    parent: NodeId,            // 4 bytes   - used for backpropagation
+    first_child: NodeId,       // 4 bytes   - low space dynamic graph (should have zero cost abstraction to my format)
     num_children: u8,          // 1 byte
-    game: G,                   // ? bytes   - FIXME, should this be a reference?
+    game: G,                   // ? bytes   - for simple visits
     solution: Option<Outcome>, // 1 byte    - possible definitive termination result
     action: ActionId,          // 1 byte
     action_prob: f32,          // 4 bytes
-    outcome_probs: [f32; 3],    // 12 bytes - FIXME: is this always in [0, 1]?
-    num_visits: f32,            // 4 bytes  - FIXME, should this be int
+    outcome_probs: [f32; 3],    // 12 bytes - NOT Probabilities, but the sum of the outcome logits
+    num_visits: f32,            // 4 bytes  - f32 for faster division
 }
 
 impl<G: Game<N>, const N: usize> Node<G, N> {

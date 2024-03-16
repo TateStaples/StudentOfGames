@@ -7,5 +7,6 @@ mod mcts;
 pub mod policies;
 pub mod prelude;
 mod utils;
-mod cfr;
 mod SoG;
+mod game_tree;
+mod search_statistics;

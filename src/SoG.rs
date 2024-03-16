@@ -1,243 +1,129 @@
 use std::sync::{Arc, Mutex};
 use std::thread;
-use rand::prelude::*;
 use crate::config::Exploration;
+use crate::game_tree::{ImperfectNode, Node, NodeTransition, NodeId, ActionId};
 use crate::prelude::{Game, NNPolicy, Policy};
 
-type NodeId = usize;
-type ActionId = usize;
+type StateId = usize;
 type Outcome = f32;
-type Range<const S: usize> = [f32; S];
-type Belief<G: Game<N>, const N: usize, const S: usize> = (G::PublicInformation, [Range<S>; 2]);
-type ActionPolicy = Vec<(f32, ActionId)>;
-fn sample_policy<const N:usize>(policy: ActionPolicy) -> ActionId {
-    let mut rng = thread_rng();
-    let mut sum = 0.0;
-    let mut action = 0;
-    let random_number: f32 = rng.gen_range(0.0..1.0);
-    for (p, i) in policy.iter() {
-        sum += p;
-        if sum > random_number {
-            action = *i;
-            break;
-        }
-    }
-    action
-}
-type ReplayBuffer<G: Game<N>, const N: usize, const S: usize> = Arc<Mutex<Vec<(Belief<G,N,S>, Outcome, ActionPolicy)>>>;  // distribution of information states for each player
-type PublicInformation<G: Game<N>, const N: usize> = G::PublicInformation;  // public and private information knowledge of player
-enum Result {
-    Edge(NodeId),
-    Terminal(Outcome),
-}
-struct TransitionMatrix<G: Game<N>, const N:usize, const S: usize> {  // Decision and chance nodes
-    public_state: PublicInformation<G, N>,      // public information state
-    private_ranges: [Range<S>; 2],              // private information ranges
-    player: G::PlayerId,                        // player to move (can be chance player)
-    payoff: [[f32; S]; S],                      // payoff matrix
-    visits: f32,                                // number of visits
-    first_edge: usize,                          // first action option
-    num_edges: usize,                           // number of action options
-}
+type Counterfactuals = [Vec<Outcome>; 2];  // is 2p0s this can be stored as a single array
+type Probability = f32;
+type Range = Vec<(StateId, Probability)>;  // TODO: redefine this type
+type Belief<G: Game, const A: usize, const S: usize> = (G::PublicInformation, [Range; 2]);
+type ActionPolicy<const A: usize> = [Probability; A];  // TODO: redefine this type
+type ReplayBuffer<G: Game, const A: usize, const S: usize> = Arc<Mutex<Vec<(Belief<G,A,S>, Outcome, ActionPolicy<A>)>>>;  // distribution of information states for each player
 
-
-trait Node {
-    fn cfr_policy(&self) -> ActionPolicy {
-        let mut policy = self.action_quality;
-        for action_id in 0..N {
-            policy[action_id] /= self.action_counts[action_id];
-        }
-        policy
-    }
-    #[inline]
-    fn action_probability(&self, action_id: ActionId) -> f32 {
-        for (probability, action) in self.cfr_policy() {
-            if action == action_id {
-                return probability;
-            }
-        }
-        0.0
-    }
-
-    fn update_action_counts(&mut self, state: action_id: ActionId) {
-        self.action_counts[action_id] += 1.0;
-    }
-
-    fn update_action_quality(&mut self, action_id: ActionId, value: f32) {
-        self.action_quality[action_id] += value;
-    }
-
-    fn update_range(&self, state_id: usize, action_id: ActionId) -> [Range<S>; 2] {
-        // FIXME: this is not the correct way to update the range
-        let mut new_range = self.private_ranges;
-        for i in 0..2 {
-            for j in 0..S {
-                new_range[i][j] *= self.action_probability(action_id);
-            }
-        }
-        new_range
-    }
-
-    #[inline]
-    fn belief(&self) -> Belief<G, N, S> {
-        (self.public_state, self.private_ranges)
-    }
-
-    fn new(game: &G, ranges: [Range<S>; 2], value_prior: [Outcome; N], solved: bool) -> Self {
-        Self {
-            public_state: game.public_state(),
-            private_ranges: ranges,              // private information ranges
-        }
-    }
-
-    fn solved(&self) -> bool {}
-}
-struct SoGConfigs {
-    explores: usize,  // number of nodes to expand
-    exploration: Exploration,  // exploration strategy
-    exploration_chance: f32,  // chance to explore
-    update_per: usize,  // number of updates per expansion
-    AUTO_EXTEND: bool, // extend visits
-    RESIGN_THRESHOLD: Option<f32>,  // threshold for resigning
-    MAX_ACTIONS: u8,  // maximum number of actions
-    move_greedy: u8,  // after this number of actions, be greedy for training
-    update_prob: f32,  // probability of updating the network
-}
-pub struct GtCfr<'a, G: Game<N>, P: Policy<G, N>, const N: usize, const S: usize> {
+pub struct GtCfr<'a, G: Game, P: Policy<G, A, S>, const A: usize, const S: usize> {  // TODO: maybe the nodes should have a different lifetime
     root: NodeId,
     starting_game: G,
-    nodes: Vec<Node<G, N, S>>,
-    prior: &'a P,  //
-    cfg: &'a SoGConfigs
+    prior: &'a P,
+    exploration_rate: f32,  // PUCT parameter
 }
-impl<'a , G: Game<N>, P: Policy<G, N>, const N: usize, const S: usize> GtCfr<'a, G, P, N, S> {
+impl<'a , G: Game, P: Policy<G, A, S>, N: ImperfectNode<'a, G, C>, const A: usize, const S: usize, const C: usize> GtCfr<'a, G, P, A, S> {
     // ---------- Usage ---------- //
     // Create the game tree, reserving space for 'capacity' nodes without reallocation
-    pub fn with_capacity(game: G, belief: Belief<G, N, S>, capacity: usize, cfg: &'a SoGConfigs, prior: &'a P) -> Self {
-        let mut nodes = Vec::with_capacity(capacity);
+    pub fn with_capacity(game: G, belief: Belief<G, A, S>, capacity: usize, prior: &'a P) -> Self {
+        let public_information = belief.0;
+        let root = N::empty(public_information);
         let mut sog = Self {
-            root: 0,
+            root,
             starting_game: game,
-            nodes,
             prior,
-            cfg,
+            exploration_rate: 0.5,  // FIXME: figure out a decent value for this
         };
-        sog.reset(belief, None);
         sog
     }
-    fn reset(&mut self, belief: Belief<G, N, S>, game: Option<G>) {
-        let root = self.node(0);
-        self.nodes.clear();
-        self.nodes.push(Node::new(&game, belief.1, [1.0; N], false));
-        self.starting_game = game;
-
-    }
     pub fn exploit(&mut self, game: G) -> G::Action {
-        let (value, policy) = self.search(game);
+        let (_, policy) = self.search(game);
         let action = sample_policy(policy);
         action.into()
     }
 
-    // move the root to the new game state
-    fn continual_resolving(&mut self, new_state: G) {  // Find the information states at the start of GT-CFR
-        todo!();  // probably need helper function from the game
-        // Find nearest parent from the previous search
+    // Note: I think SoG mixes old range with gadget range
+    // move the root to the new game state (https://github.dev/lifrordi/DeepStack-Leduc/tree/master/Source - cfrd_gadget.lua, resolving.lua, continual_resolving.lua [compute_action])
+    fn continual_resolving(&mut self, root_ranges: [Range; 2], new_state: G) {  // Find the information states at the start of GT-CFR
+        // update invariant from node, state (make range and values consistent with actions taken
+            // Chance Node: adjust CFVs based off EV, renormalize ranges based off observations
+        // resolve based off node, player range, opponent cfvs bound
+            // Create lookahead tree (Deep-stack up to chance node)
+            // Iterate _compute: opp_range, curr_strat, ranges, update_avg, terminal equities, cfvs, regrets, avg cfvs
+            // normalize average strategies and cfvs
 
-        // connect nearest state to new state
-
-        // Fill out the auxiliary tree to get range
-
-        // re-root the tree to the new state
-        self.starting_game = new_state;
-        self.root = 0;
+        // get the cfr_root (lowest part of history matching) and the grow_root (latest observation)
     }
-    // ---------- Getters ---------- //
-    #[inline]
-    fn node(&self, node_id: NodeId) -> &Node<G, N, S> { &self.nodes[node_id as usize] }
-    #[inline]
-    fn mut_node(&mut self, node_id: NodeId) -> &mut Node<G, N, S> { &mut self.nodes[node_id as usize] }
 
-    fn match_child(&self, node_id: NodeId, action: ActionId, state: PublicInformation<G, N>) -> Option<NodeId> {
-        // todo
-        let node = self.node(node_id);
-        let outcomes = node.action_outcomes[action];
-
+    fn depth_limit_tree(&self, depth: u8) {
+        // Expand the tree to the depth limit
     }
     // ---------- Major Algorithms ---------- //
-    // Search: Growing Tree Counter Factual Regret Minimization
-    fn gt_cfr(&mut self, node_id: NodeId, expansions: usize, update_per: usize) -> (f32, ActionPolicy) {
+    fn search(&mut self, world_state: G, ranges: [Range; 2], opponent_counterfactuals: Option<Counterfactuals>) {
+        self.continual_resolving(ranges, world_state);
+    }
+
+    // Search: Growing Tree Counter Factual Regret Minimization (Search)
+    fn gt_cfr(&mut self, node_id: NodeId, ranges: [Range; 2], expansions: usize, update_per: usize) -> (Counterfactuals, ActionPolicy<A>) {
         let node = self.node(node_id);
-        let mut value = 0.0;
+        // Reroot the tree then connect to the new state
+        // Clear SearchStatistics (besides root CFV) -> does it make sense to set previous policy as starting point
+        let mut value = [vec![0.0]; 2];
         for _ in 0..(expansions/update_per) {
-            value = self.cfr(node_id);
-            let world_state = Game::sample_state(&node.public_state);  // TODO: sample a new game state
+            // Recalculate gadget range and mix in -> CFV should be saved in the SearchStatistics
+            value = self.cfr(node_id, ranges.clone());  // from CFR root
+
             for _ in 0..update_per {  // CFR slow, so do it in batches
-                self.grow(node_id, world_state);
+                let (state_id, world_state) = Game::sample_state(node.public_state());  // Should grow off of root_grow
+                self.grow(node_id, state_id, world_state);
             }
         }
-        return (value, node.cfr_policy())
+        return (value, node.cfr_policy());
     }
 
-    // CFR+: propagate belief down and counterfactual value up
-    fn cfr(&mut self, node_id: NodeId) -> f32 {  // returns the value, regret
+    // CFR+ (populate SearchStatistics): belief down and counterfactual values (for given policy) up
+    fn cfr(&mut self, node_id: NodeId, ranges: [Range; 2]) -> Counterfactuals {
+        // DeepStack order: opp_range √, strategy (reach probabilities), ranges, update avg_strat, terminal values, values, regrets, avg_values
         let node = self.mut_node(node_id);
-        let active_policy = node.cfr_policy();
-        return if !node.leaf() {
-            let mut node_value = 0.0;
-            for action_id in 0..N {
-                let action_prob = active_policy[action_id];
-                // get the range update
-                let action_value = self.action_value(node, action_id);
-                for a in 0..N {  // update the regrets
-                    if a == action_id {
-                        node.update_action_quality(a, action_value * action_prob);  // update the quality (regret
-                    } else {
-                        node.update_action_quality(a, -action_value * action_prob);
+        // TODO: clear the search statistics (maybe leave a base value to improve convergence)
+        let evaluation = if node.leaf() { Some(self.prior((node.public_state(), ranges))) } else { None };
+        // r(s,a) = v(s,a) - EV(policy)
+        // Q(s,a) += r(s,a) [min value of 0]
+        // π(s,a) = percentage of Q
+        // Note: DeepStack stores the average CFVs for later storage
+        // propagate the belief down
+        for (result, new_ranges, cases) in node.iter_results(&ranges) {
+            // propagate search_stats back up
+            match result {
+                NodeTransition::Edge(id) => {
+                    let counterfactuals = self.cfr(id, new_ranges);
+                    for (state, next_state, action, probability) in cases {
+                        let value = counterfactuals.get(next_state).expect("Transfer to unknown state"); // TODO: figure out the type
+                        node.update_action_quality(state, action, value, probability)
                     }
-                    node_value += action_value * action_prob;
+                },
+                NodeTransition::Terminal(v) => {
+                    for (state, action, probability) in cases {
+                        node.update_action_quality(state, action, v, probability)
+                    }
                 }
-            }
-            node.action_quality.map(|x| x.max(0.0));  // remove negative regrets
-            // value of this node is expected value of results
-            node_value
-        } else if node.solved() {
-            self.terminal_value(node_id)
-        } else {
-            let random_number: f32 = thread_rng().gen_range(0.0..1.0);
-            let belief = node.belief();
-            let (v, p) = self.prior.eval(belief);
-            v
+                NodeTransition::Undefined => {
+                    let (value, _) = evaluation.unwrap();
+                    for (state, next_state, action, probability) in cases {
+                        let value = value.get(next_state).expect("Transfer to unknown state");
+                        node.update_action_quality(state, action, value, probability)
+                    }
+                }
+            };
         }
+        // TODO: normalize the regret to be min of 0
     }
 
-    fn action_value(&mut self, mut node: &Node<G, N, S>, action_id: ActionId) -> f32 {  // FIXME
-        let new_range = node.update_range(action_id);
-        let mut action_value = 0.0;
-        for c in node.outcomes(action_id).iter() {
-            if let Some(child) = c {
-                let child_node = self.mut_node(child);
-                child_node.private_ranges = new_range;
-                let value = self.cfr(child);
-                let child_prob = child_node.visits() / node.action_counts[action_id];
-                action_value += value * child_prob;
-            } else {
-                break;
-            }
-        }
-        action_value
-    }
-    fn terminal_value(&self, node_id: NodeId) -> Outcome {
-        todo!()
-    }
-
-    // Use policy to target tree expansion
-    fn grow(&mut self, mut node_id: NodeId, mut world_state: G) {
+    // Use policy select leaf for expansion
+    fn grow(&mut self, mut node_id: NodeId, state_id: StateId, mut world_state: G) {
         let mut action_id = 0;
         loop {
             let node = self.mut_node(node_id);
-            if node.is_visited() {
-                action_id = self.grow_step(node);
-                node.update_action_counts(action_id);
+            if node.is_visited(state_id) {
+                action_id = self.grow_step(node_id, state_id, &world_state);
+                node.update_action_counts(state_id, action_id);
                 let action = action_id.into();
                 world_state.step(action);
                 let state = world_state.public_state();
@@ -247,70 +133,57 @@ impl<'a , G: Game<N>, P: Policy<G, N>, const N: usize, const S: usize> GtCfr<'a,
                 return;
             }
             else {
-                self.visit(node_id, action_id, world_state);
+                node.visit(node_id, action_id, world_state);
                 return;
             }
         }
     }
-
-    // best child for growing the tree
-    fn grow_step(&self, parent: NodeId) -> ActionId {
-        (0..N).iter().max_by_key(|action: ActionId| {
-            let cfr = self.exploit_value(parent, action) * 0.5;
-            let puct = self.explore_value(parent, action) * 0.5;
+    // select the next step down the tree
+    fn grow_step(&self, parent: NodeId, state_id: StateId, world_state: &G) -> ActionId {
+        (0..A).iter().max_by_key(|action: ActionId| {
+            let cfr = self.exploit_value(parent, state_id, action) * 0.5;
+            let puct = self.explore_value(parent, state_id, action) * 0.5;
             cfr + puct
         }).unwrap()
     }
-    fn exploit_value(&self, parent: NodeId, action_id: ActionId) -> f32 {
+    // greedy step value
+    fn exploit_value(&self, parent: NodeId, state_id: StateId, action_id: ActionId) -> Outcome {
         let parent = self.node(parent);
-        parent.action_probability(action_id)
+        parent.action_probability(state_id, action_id)
     }
-    // the value of the node during exploration. Normalizes frequently visited nodes
-    fn explore_value(&self, parent: NodeId, action_id: ActionId) -> f32 {
-        let parent = self.node(parent);
+    // exploration step value. Normalizes frequently visited nodes
+    fn explore_value(&self, parent: NodeId, state_id: StateId, action_id: ActionId) -> Outcome {  // TODO: is this constrained 0-1
+        // TODO: figure out virtual losses - https://www.google.com/url?sa=t&rct=j&q=&esrc=s&source=web&cd=&cad=rja&uact=8&ved=2ahUKEwjkhdvOr_eEAxVANVkFHTsmB9oQFnoECBIQAQ&url=https%3A%2F%2Fmedium.com%2Foracledevs%2Flessons-from-alpha-zero-part-5-performance-optimization-664b38dc509e&usg=AOvVaw0FolKsdBOuGLML3WIqTTu4&opi=89978449
+        let parent = self.node(parent);  // Search Statistics
         let action_visits = parent.action_counts(action_id);
-        match self.cfg.exploration {
-            Exploration::Uct { c } => {
-                let visits = (c * action_visits.ln()).sqrt();
-                visits / action_visits.sqrt()
-            }
-            Exploration::PolynomialUct { c } => {
-                let visits = parent.visits().sqrt();
-                c * parent.action_probability(action_id) * visits / (1.0 + action_visits)
-            }
-        }
-    }
-    // open a new node.
-    fn visit(&mut self, parent_id: NodeId, action: ActionId, new_world_state: G) {
-        let new_node: Node<G, N, S>;
-        let parent = self.mut_node(parent_id);
-        let range = parent.update_range(action);
-        let belief: Belief<G, N, S> = (new_world_state.public_state(), range);
-        if new_world_state.is_over() {
-            let outcome = new_world_state.outcome();
-            new_node = Node::new(parent_id, new_world_state, true, outcome);
-        } else {
-            let (v, p) = self.prior.eval(belief);
-            new_node = Node::new(parent_id, new_world_state, false, v);
-        }
-        let new_node_id = self.nodes.len();
-        self.nodes.push(new_node);
-        // TODO: figure out how to add the new node to the parent
+        let quality = parent.action_quality(state_id, action_id);
+        let node_visits = parent.visits();
+        let puct = quality / action_visits + self.exploration_rate * parent.action_probability(state_id, action_id) * node_visits.sqrt() / (1.0 + action_visits);
+        puct
     }
 }
 
-struct StudentOfGames<'a, G: Game<N>, P: Policy<G, N>, const N: usize, const S: usize> {
+struct SoGConfigs {
+    explores: usize,  // number of nodes to expand
+    exploration: Exploration,  // exploration strategy
+    exploration_chance: Probability,  // chance to explore
+    update_per: usize,  // number of updates per expansion
+    AUTO_EXTEND: bool, // extend visits
+    MAX_ACTIONS: u8,  // maximum number of actions
+    move_greedy: u8,  // after this number of actions, be greedy for training
+    update_prob: Probability,  // probability of updating the network
+}
+struct StudentOfGames<'a, G: Game, const A: usize, const S: usize> {
     starting_game: G,
-    starting_belief: Belief<G, N, S>,
-    resign_threshold: Option<f32>,
+    starting_belief: Belief<G, A, S>,
+    resign_threshold: Option<Outcome>,
     longest_self_play: u8,
     greedy_depth: u8,
     self_play_explores: usize,
     self_play_updates_per: usize,
-    self_play_explore_chance: f32,
+    self_play_explore_chance: Probability,
 }
-
-impl<'a , G: Game<N>, P: Policy<G, N>, const N: usize, const S: usize> StudentOfGames<'a, G, P, N, S> {
+impl<'a , G: Game, P: Policy<G, A, S>, N: Node<'a, G, C>, const A: usize, const S: usize, const C: usize> StudentOfGames<'a, G, A, S> {
     // Learn from self-play. Important
     pub fn learn(&self, capacity: usize, play_threads: u8, prior: P, configs: SoGConfigs) {
         let replay_buffer = Arc::new(Mutex::new(Vec::new()));
@@ -319,7 +192,7 @@ impl<'a , G: Game<N>, P: Policy<G, N>, const N: usize, const S: usize> StudentOf
         // self-play
         for _ in 0..play_threads {
             let handle = thread::spawn(move || {
-                let mut sog = Self::with_capacity(self.starting_game.clone(), self.starting_belief, capacity, &configs, &prior);
+                let mut sog = Self::with_capacity(self.starting_game.clone(), self.starting_belief.clone(), capacity, &configs, &prior);
                 while training {
                     self.self_play(sog, Arc::clone(&replay_buffer));
                     sog.clear();
@@ -331,7 +204,7 @@ impl<'a , G: Game<N>, P: Policy<G, N>, const N: usize, const S: usize> StudentOf
         // train network
         self.save();  // TODO: add a termination condition
     }
-    fn self_play(&self, mut tree: GtCfr<G, P, N, S>, replay_buffer: ReplayBuffer<G, N, S>) {
+    fn self_play(&self, mut tree: GtCfr<G, P, A, S>, replay_buffer: ReplayBuffer<G, A, S>) {
         let mut actions = 0;
         let mut action: ActionId; // play self
         let mut game = self.starting_game.clone();
@@ -339,12 +212,12 @@ impl<'a , G: Game<N>, P: Policy<G, N>, const N: usize, const S: usize> StudentOf
         while !game.is_over() && actions < self.longest_self_play {
             tree.continual_resolving(game.clone());  // update the tree to be rooted at the new location
             // SoG agent
-            let (value, policy) = tree.gt_cfr(tree.root, self.self_play_explores, self.self_play_updates_per);  // do your gtcfr search of the tree
+            let (value, policy) = tree.gt_cfr(tree.root, self.starting_belief.1.clone(), self.self_play_explores, self.self_play_updates_per);  // do your gtcfr search of the tree
             replay_buffer.lock().unwrap().push((tree.node(tree.root).belief(), value, policy));  // add to the replay buffer
             if value < self.resign_threshold.unwrap_or(f32::NEG_INFINITY) {  // not worth compute for self-play
                 return
             }
-            let self_play_policy = (1 - self.self_play_explore_chance) * policy + self.self_play_explore_chance * [1/N; N];
+            let self_play_policy = (1 - self.self_play_explore_chance) * policy + self.self_play_explore_chance * [1/A; A];
             if actions < self.greedy_depth {  // explore shallowly then be greedy for better approximation
                 action = sample_policy(self_play_policy);
             } else {  // greedy at depth

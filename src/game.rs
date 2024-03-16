@@ -5,13 +5,12 @@ pub trait HasTurnOrder: Eq + Clone + Copy + std::fmt::Debug {
     fn next(&self) -> Self;
 }
 
-pub trait Game<const N: usize>: Eq + Hash + Clone + std::fmt::Debug + Send {
+pub trait Game: Eq + Hash + Clone + std::fmt::Debug + Send {
     type PlayerId: HasTurnOrder;  // The playerId enum must have .next() and .prev()
     type Action: Eq + Clone + Copy + std::fmt::Debug + Into<usize> + From<usize>;
     type ActionIterator: Iterator<Item = Self::Action>;
     type PublicInformation: PartialEq + Clone + std::fmt::Debug + Send;
 
-    const MAX_NUM_ACTIONS: usize = N;
     const MAX_TURNS: usize;
     const NAME: &'static str;
     const NUM_PLAYERS: usize;
@@ -24,5 +23,6 @@ pub trait Game<const N: usize>: Eq + Hash + Clone + std::fmt::Debug + Send {
     fn iter_actions(&self) -> Self::ActionIterator;
     fn step(&mut self, action: &Self::Action) -> bool;  // Implement action and return whether done
     fn public_information(&self) -> Self::PublicInformation;  // The state features
+    fn sample_state(public_information: Self::PublicInformation) -> Self;  // Sample a state from the public information
     fn print(&self);  // Output the game state
 }

@@ -37,19 +37,18 @@ Counter factual Regret Minimization
 - Counterfactual Value-and-Policy Network (CVPN): belief -> values and action policies (parameters Ø)
   - Value (v): EV for each information state for each player. Trained on queries
   - Policy(P/π): action probabilities for each information state for acting player. Trained on trajectories
-- Regret (r): oppurtunity cost, r(s,a) = v(s,a) - EV(P(s, a)).
+- Regret (r): opportunity cost, r(s,a) = v(s,a) - EV(P(s, a)).
 - Modified Continual-Resolving: repeated safe resolving (from prev sol and opp CFR values)
 
 ## Questions:
-1. How to handle terminal states in the game tree?
+1. What are the transition cases: poker vs Fog of War chess
 2. Figure out how DeepStack modified continual-resolving works
-3. How to structure the transition function
-4. In AlphaZero, does self-play share game tree?
+3. In AlphaZero, does self-play share game tree?
 
 ## In Progress
-- Implement a consistent way to handle the game tree
 - Implement the modified_resolving
 - Implement the Bayesian pass through
+- Implement the policy sampling (trait?)
 - Add noise
 - Check the Licence for the code
 - Implementing games for testing and fun 
@@ -58,6 +57,7 @@ Counter factual Regret Minimization
 ## Goals
 - [ ] Expand to multiplayer games
 - [ ] Hierarchical Information State
+  - Encode game dynamics into State Space Architecture (ie Mamba), then diffusion planning by varying ∆t
 - [ ] Support for non-rivalrous games
 - [ ] Support for imitation learning starting point
 
