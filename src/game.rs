@@ -11,6 +11,7 @@ pub trait Game: Eq + Hash + Clone + std::fmt::Debug + Send {
     type ActionIterator: Iterator<Item = Self::Action>;
     type PublicInformation: PartialEq + Clone + std::fmt::Debug + Send;
 
+    const MAX_NUM_ACTIONS: usize;
     const MAX_TURNS: usize;
     const NAME: &'static str;
     const NUM_PLAYERS: usize;

@@ -1,15 +1,16 @@
-use crate::prelude::Game;
-use crate::config::{ActionSelection, Exploration, Fpu, MCTSConfig, PolicyNoise};
-use crate::game::{Outcome};
+use crate::helpers::prelude::Game;
 use crate::policies::Policy;
 use rand::{distributions::Distribution, thread_rng, Rng};
 use rand_distr::Dirichlet;
+use crate::game_tree::Outcome;
+use crate::helpers::prelude::*;
+use crate::search_statistics::Range;
 
 type NodeId = u32;
 type ActionId = u8;
 
 #[derive(Debug)]
-struct Node<G: Game<N>, const N: usize> {
+struct Node<G: Game, const N: usize> {
     parent: NodeId,            // 4 bytes   - used for backpropagation
     first_child: NodeId,       // 4 bytes   - low space dynamic graph (should have zero cost abstraction to my format)
     num_children: u8,          // 1 byte
@@ -21,7 +22,7 @@ struct Node<G: Game<N>, const N: usize> {
     num_visits: f32,            // 4 bytes  - f32 for faster division
 }
 
-impl<G: Game<N>, const N: usize> Node<G, N> {
+impl<G: Game, const N: usize> Node<G, N> {
     // expected quality of node
     fn q(&self) -> f32 { (self.outcome_probs[2] - self.outcome_probs[0]) / self.num_visits }  // quality of node, given by excess wins divided by visits
     
@@ -77,15 +78,15 @@ impl<G: Game<N>, const N: usize> Node<G, N> {
     }
 }
 
-pub struct MCTS<'a, G: Game<N>, P: Policy<G, N>, const N: usize> {
+pub struct MCTS<'a, G: Game, P: Policy<G, A, 1>, const A: usize> {
     root: NodeId,
     offset: NodeId,
-    nodes: Vec<Node<G, N>>,
+    nodes: Vec<Node<G, A>>,
     policy: &'a mut P,  //
     cfg: MCTSConfig,
 }
 
-impl<'a, G: Game<N>, P: Policy<G, N>, const N: usize> MCTS<'a, G, P, N> {
+impl<'a, G: Game, P: Policy<G, A, 1>, const A: usize> MCTS<'a, G, P, A> {
     pub fn exploit(explores: usize, cfg: MCTSConfig, policy: &'a mut P, game: G, action_selection: ActionSelection) -> G::Action {
         let mut mcts = Self::with_capacity(explores + 1, cfg, policy, game);
         mcts.explore_n(explores);  // creates 'explores' nodes
@@ -123,25 +124,25 @@ impl<'a, G: Game<N>, P: Policy<G, N>, const N: usize> MCTS<'a, G, P, N> {
         self.nodes.len() as NodeId + self.offset
     }
 
-    fn node(&self, node_id: NodeId) -> &Node<G, N> {   // get_node: nodeId -> Node
+    fn node(&self, node_id: NodeId) -> &Node<G, A> {   // get_node: nodeId -> Node
         &self.nodes[(node_id - self.offset) as usize]
     }
 
-    fn mut_node(&mut self, node_id: NodeId) -> &mut Node<G, N> {  // nodeID -> &mut Node
+    fn mut_node(&mut self, node_id: NodeId) -> &mut Node<G, A> {  // nodeID -> &mut Node
         &mut self.nodes[(node_id - self.offset) as usize]
     }
 
-    fn children_of(&self, node: &Node<G, N>) -> &[Node<G, N>] {
+    fn children_of(&self, node: &Node<G, A>) -> &[Node<G, A>] {
         &self.nodes[(node.first_child - self.offset) as usize..(node.last_child() - self.offset) as usize]
     }
 
-    fn mut_nodes(&mut self, first_child: NodeId, last_child: NodeId) -> &mut [Node<G, N>] {
+    fn mut_nodes(&mut self, first_child: NodeId, last_child: NodeId) -> &mut [Node<G, A>] {
         &mut self.nodes[(first_child - self.offset) as usize..(last_child - self.offset) as usize]
     }
 
     // --------- GAME STATE --------- //
     // Fill array with visit rate of each action
-    pub fn target_policy(&self, search_policy: &mut [f32; N]) {
+    pub fn target_policy(&self, search_policy: &mut [f32; A]) {
         search_policy.fill(0.0);  // initialize
         let mut total = 0.0;  // TODO: what is this
         let root = self.node(self.root);
@@ -174,7 +175,7 @@ impl<'a, G: Game<N>, P: Policy<G, N>, const N: usize> MCTS<'a, G, P, N> {
             }
         }
         // assert!(total > 0.0, "{:?} {:?}", root.solution, root.num_visits);
-        for i in 0..N {
+        for i in 0..A {
             search_policy[i] /= total;
         }
     }
@@ -288,7 +289,7 @@ impl<'a, G: Game<N>, P: Policy<G, N>, const N: usize> MCTS<'a, G, P, N> {
         }
     }
 
-    fn select_best_child(&self, parent: &Node<G, N>) -> NodeId {  // TODO: replace with option
+    fn select_best_child(&self, parent: &Node<G, A>) -> NodeId {  // TODO: replace with option
         // This might be functional with max() and a custom comparator
         let mut best_child_id = None;
         let mut best_value = None;
@@ -305,7 +306,7 @@ impl<'a, G: Game<N>, P: Policy<G, N>, const N: usize> MCTS<'a, G, P, N> {
         best_child_id.unwrap()
     }
 
-    fn exploit_value(&self, parent: &Node<G, N>, child: &Node<G, N>) -> f32 {
+    fn exploit_value(&self, parent: &Node<G, A>, child: &Node<G, A>) -> f32 {
         if let Some(outcome) = child.solution {
             if self.cfg.select_solved_nodes {
                 outcome.reversed().value()
@@ -323,7 +324,7 @@ impl<'a, G: Game<N>, P: Policy<G, N>, const N: usize> MCTS<'a, G, P, N> {
         }
     }
     // the value of the node during exploration. Normalizes frequently visited nodes
-    fn explore_value(&self, parent: &Node<G, N>, child: &Node<G, N>) -> f32 {
+    fn explore_value(&self, parent: &Node<G, A>, child: &Node<G, A>) -> f32 {
         match self.cfg.exploration {
             Exploration::Uct { c } => {
                 let visits = (c * parent.num_visits.ln()).sqrt();
@@ -369,12 +370,12 @@ impl<'a, G: Game<N>, P: Policy<G, N>, const N: usize> MCTS<'a, G, P, N> {
         if self.cfg.auto_extend && num_children == 1 {
             return self.visit(first_child);
         } else {
-            let (logits, outcome_probs) = self.policy.eval(&game);
+            let (logits, outcome_probs) = self.policy.eval(&game, [Range::new(), Range::new()]);
             // fixme: this seems like it can be streamlined
             // stable softmax
             let mut max_logit = f32::NEG_INFINITY;
             for child in self.mut_nodes(first_child, last_child) {
-                let logit = logits[child.action as usize];
+                let logit = logits[child.action as usize][0];
                 max_logit = max_logit.max(logit);
                 child.action_prob = logit;
             }
@@ -387,7 +388,7 @@ impl<'a, G: Game<N>, P: Policy<G, N>, const N: usize> MCTS<'a, G, P, N> {
                 child.action_prob /= total;
             }
 
-            (node_id, outcome_probs, any_solved)
+            (node_id, outcome_probs[0], any_solved)
         }
     }
 
@@ -562,7 +563,7 @@ mod tests {
         }
     }
 
-    impl Game<9> for TicTacToe {
+    impl Game for TicTacToe {
         type PlayerId = PlayerId;
         type Action = Action;
         type ActionIterator = ActionIterator;
@@ -632,6 +633,30 @@ mod tests {
                 }
             }
             s
+        }
+
+        fn sample_state(public_information: Self::PublicInformation) -> Self {
+            let mut board = [[None; 3]; 3];
+            for row in 0..3 {
+                for col in 0..3 {
+                    if public_information[0][row][col] > 0.5 {
+                        board[row][col] = Some(PlayerId::X);
+                    } else if public_information[1][row][col] > 0.5 {
+                        board[row][col] = Some(PlayerId::O);
+                    }
+                }
+            }
+            let turn = board.iter().flatten().filter(|&&p| p.is_some()).count();
+            let player = if turn % 2 == 0 {
+                PlayerId::X
+            } else {
+                PlayerId::O
+            };
+            Self {
+                board,
+                player,
+                turn
+            }
         }
 
         fn print(&self) {
