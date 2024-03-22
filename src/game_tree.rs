@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use crate::game_tree::NodeTransition::Undefined;
 use crate::helpers::prelude::Game;
 
-pub type NodeId = usize;  // If I give every node a reference to their tree, can I just use references?
+pub type NodeId = usize;
 pub type ActionId = usize;
 pub type StateId = usize;  // TODO: idk how to index in generic format
 pub type Outcome = f32;
@@ -23,7 +23,11 @@ impl <'a, G: Game, N: Node<'a, G>> GameTree<'a, G, N> {
         new.nodes.push(root);
         new
     }
-    pub(crate) fn push(&mut self, node: N) { self.nodes.push(node); }
+    pub(crate) fn push(&mut self, node: N) -> NodeId {
+        let node_id = self.nodes.len();
+        self.nodes.push(node);
+        node_id
+    }
     pub(crate) fn node(&self, node_id: NodeId) -> &N { self.nodes.get(node_id).expect("Node not found") }
     pub(crate) fn mut_node(&mut self, node_id: NodeId) -> &mut N { self.nodes.get_mut(node_id).expect("Node not found") }
     pub(crate) fn root(&self) -> &N { self.node(self.root) }
@@ -114,7 +118,7 @@ impl<'a, G: Game> Node<'a, G> for TransitionMap<'a, G> {
     }
 
     fn leaf(&self) -> bool {
-        todo!()
+        self.children().iter().any(|x| x == Undefined)
     }
 
     fn public_state(&self) -> &G::PublicInformation { &self.public_state }

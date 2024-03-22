@@ -3,35 +3,35 @@ use crate::game_tree::{GameTree, NodeTransition, NodeId, ActionId, StateId, Outc
 use crate::search_statistics::{FixedStatistics, Range, ActionPolicy, ImperfectNode};
 use crate::helpers::prelude::{Game, NNPolicy, Policy};
 use crate::cfr::cfr;
-
+// What needs mutable node access: growth, search statistics
 
 type Belief<G: Game, const A: usize, const S: usize> = (G::PublicInformation, [Range; 2]);
 
 fn mix_range(range1: Range, range2: Range, weight: f32) -> Range {
     range1.iter().zip(range2.iter()).map(|((s1, p1), (s2, p2))| {
         (s1, p1 * weight + p2 * (1.0 - weight))
-    }).collect()  // TODO: check that this works (copilot suggestion)
+    }).collect()
 }
 // DeepStack: (https://github.dev/lifrordi/DeepStack-Leduc/tree/master/Source - cfrd_gadget.lua, resolving.lua, continual_resolving.lua [compute_action])
 pub struct GtCfr<'a, G: Game, P: Policy<G, A, S>, N: ImperfectNode<'a, G>, const A: usize, const S: usize> {
     tree: GameTree<'a, G, N>,
-    root_range: Range,
+    root_ranges: [Range; 2],
     prior: &'a P,
     exploration_rate: f32,  // PUCT parameter
     search_explorations: usize,  // number of nodes to expand
     updates_per: usize,  // number of updates per expansion
 }
-impl<'a , G: Game, P: Policy<G, A, S>, N: ImperfectNode<'a, G>, const A: usize, const S: usize> GtCfr<'a, G, P, N, A, S> {  // TODO: should policy and Node have the same lifetime
+impl<'a , G: Game, P: Policy<G, A, S>, N: ImperfectNode<'a, G>, const A: usize, const S: usize> GtCfr<'a, G, P, N, A, S> {
     // ---------- Usage ---------- //
     // Create the game tree, reserving space for 'capacity' nodes without reallocation
     pub fn with_capacity(belief: Belief<G, A, S>, capacity: usize, prior: &'a P, search_explorations: usize, updates_per: usize) -> Self {
         let (public_information, ranges) = belief;
         let mut root = N::empty(public_information);
-        root.initialize(ranges, prior);
+        root.initialize(ranges.clone());
         let tree = GameTree::with_capacity(capacity, root);
         let mut sog = Self {
             tree,
-            root_range: todo!(),
+            root_ranges: ranges,
             prior,
             exploration_rate: 0.5,
             search_explorations,
@@ -114,7 +114,7 @@ impl<'a , G: Game, P: Policy<G, A, S>, N: ImperfectNode<'a, G>, const A: usize, 
     }
     // exploration step value. Normalizes frequently visited nodes
     fn explore_value(&self, parent: NodeId, state_id: StateId, action_id: ActionId) -> Outcome {  // TODO: is this constrained 0-1
-        // TODO: figure out virtual losses - https://www.google.com/url?sa=t&rct=j&q=&esrc=s&source=web&cd=&cad=rja&uact=8&ved=2ahUKEwjkhdvOr_eEAxVANVkFHTsmB9oQFnoECBIQAQ&url=https%3A%2F%2Fmedium.com%2Foracledevs%2Flessons-from-alpha-zero-part-5-performance-optimization-664b38dc509e&usg=AOvVaw0FolKsdBOuGLML3WIqTTu4&opi=89978449
+        // figure out virtual losses - https://www.google.com/url?sa=t&rct=j&q=&esrc=s&source=web&cd=&cad=rja&uact=8&ved=2ahUKEwjkhdvOr_eEAxVANVkFHTsmB9oQFnoECBIQAQ&url=https%3A%2F%2Fmedium.com%2Foracledevs%2Flessons-from-alpha-zero-part-5-performance-optimization-664b38dc509e&usg=AOvVaw0FolKsdBOuGLML3WIqTTu4&opi=89978449
         let parent = self.tree.node(parent);  // Search Statistics
         let action_visits = parent.action_counts(action_id);
         let quality = parent.action_quality(state_id, action_id);
@@ -124,32 +124,38 @@ impl<'a , G: Game, P: Policy<G, A, S>, N: ImperfectNode<'a, G>, const A: usize, 
     }
     // --------- Updating Functions --------- //
     // move the root to the new game state. Returns the new state (grow_root)
-    fn safe_resolving(&mut self, new_state: G) -> NodeId { 
+    fn safe_resolving(&mut self, new_state: G) -> NodeId {
         let mut root = self.tree.root();
+        let mut root_id = self.tree.root_id();
+        let mut grow_root = root_id;
         let root_public = root.public_state();
         let mut moving = false;
         let mut expanding = false;
         for (state_id, action_id, public_info) in new_state.history() {
             if moving {
                 let node_id = self.match_child(root, public_info);
-                if let Some(id) = node_id {
+                if let Some(id) = node_id {  // TODO: update the ranges here
                     root = self.tree.node(id);
+                    root_id = id;
+                    grow_root = id;
                 }
-                else {
+                else {  // child not found under parent. Novel branching
                     expanding = true;
                     moving = false;
                 }
             }
             if expanding {
                 let new_node = N::empty(public_info.clone());
-                root.add_transition(state_id, action_id, NodeTransition::Edge(self.tree.push(new_node)));
+                let new_node_id = self.tree.push(new_node);
+                root.add_transition(state_id, action_id, NodeTransition::Edge(new_node_id));
+                grow_root = new_node_id;
             }
             moving = moving || root_public == public_info;   // Below the root
         }
         assert!(moving || expanding, "New state is not a child of the root");
-        self.tree.reroot()
-        // get the cfr_root (lowest part of history matching) and the grow_root (latest observation)
+        self.tree.reroot(root_id);
         // during traversal, update ranges and values
+        return grow_root;
     }
     // Find the NodeID below the parent that matches the public state
     fn match_child(&self, parent: NodeId, child_state: G::PublicInformation) -> Option<NodeId> {
@@ -167,6 +173,7 @@ impl<'a , G: Game, P: Policy<G, A, S>, N: ImperfectNode<'a, G>, const A: usize, 
     // reroot the action with your move - should this store ranges for true value. Can I run two of these on the same game tree
     fn update_with_action(&mut self, action: G::Action, result: G) {
         todo!("Update the game state with the action")
+        // Need the new state and nodeID
     }
 }
 
