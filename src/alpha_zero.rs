@@ -1,9 +1,6 @@
-use crate::config::{LearningConfig, RolloutConfig, ValueTarget};
-use crate::data::*;
 use crate::game::{Game};
 use crate::mcts::MCTS;
 use crate::policies::{NNPolicy, Policy, PolicyWithCache};
-use crate::utils::*;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use rand::prelude::*;
 use rand::{distributions::Distribution, distributions::WeightedIndex};

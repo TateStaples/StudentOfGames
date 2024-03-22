@@ -1,13 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use crate::game::Game;
-use crate::game_tree::{ActionId, Counterfactuals, Node, NodeId, NodeTransition, Outcome, StateId, TransitionMatrix};
+use crate::game_tree::{ActionId, Counterfactuals, Node, NodeTransition, Outcome, StateId, TransitionMatrix};
 use crate::policies::Policy;
 
 pub type Probability = f32;
 pub type Range = Vec<(StateId, Probability)>;
 pub type Belief<G: Game, const A: usize, const S: usize> = (G::PublicInformation, [Range; 2]);
 pub type ActionPolicy = Vec<(Probability, ActionId)>;
-// TODO: consider making a torch implementation of this
+// consider making a torch implementation of this
 pub trait SearchStatistics<'a, G: Game> {  // Stores the statistics for the search in CFR
     // DeepStack: range, values, regrets, reach prob
     fn initialize(&mut self, ranges: [Range; 2]);
@@ -22,7 +22,7 @@ pub trait SearchStatistics<'a, G: Game> {  // Stores the statistics for the sear
     fn update_nodes_below(&mut self, state_id: StateId, action_id: ActionId);
     fn update_action_quality(&mut self, state_id: StateId, action_id: ActionId, value: Outcome, p: Probability);
     fn normalize(&mut self);
-    fn iter_results(&self, ranges: &[Range; 2]) -> impl Iterator<Item=(NodeTransition<G>, [Range; 2], Vec<(StateId, ActionId, Probability)>)>;  // TODO
+    fn iter_results(&self, ranges: &[Range; 2]) -> impl Iterator<Item=(NodeTransition<G, Self>, [Range; 2], Vec<(StateId, ActionId, Probability)>)>;  // TODO
 }
 pub struct FixedStatistics<'a, G: Game, const A: usize, const S: usize> {
     node: TransitionMatrix<'a, G, A, S>,
@@ -34,7 +34,7 @@ pub struct FixedStatistics<'a, G: Game, const A: usize, const S: usize> {
 
 
 impl<'a, G: Game, const A: usize, const S: usize> Node<'a, G> for FixedStatistics<'a, G, A, S> {
-    fn new(public_information: G::PublicInformation, transition_map: HashMap<(StateId, StateId, ActionId), NodeTransition<'a, G>>) -> Self {
+    fn new(public_information: G::PublicInformation, transition_map: HashMap<(StateId, StateId, ActionId), NodeTransition<G, Self>>) -> Self {
         Self {
             node: TransitionMatrix::new(public_information, transition_map),
             nodes_below: [[0.0; A]; S],
@@ -52,16 +52,16 @@ impl<'a, G: Game, const A: usize, const S: usize> Node<'a, G> for FixedStatistic
         self.node.public_state()
     }
 
-    fn transition(&self, state_1: StateId, state_2: StateId, action_id: ActionId) -> (StateId, &NodeTransition<'a, G>) {
-        self.node.transition(state_1, state_2, action_id)
+    fn transition(&self, state_1: StateId, state_2: StateId, action_id: ActionId) -> (StateId, &NodeTransition<G, Self<>>) {
+        self.node.transition(state_1, state_2, action_id).into()
     }
 
-    fn children(&self) -> HashSet<NodeTransition<G>> {
-        self.node.children()
+    fn children(&self) -> HashSet<NodeTransition<G, Self>> {
+        self.node.children().into()
     }
 
-    fn visit(&mut self, active_state: StateId, other_state: StateId, action_id: ActionId, new_state: G, next_node_id: NodeId) -> Option<Self> {
-        self.node.visit(active_state, other_state, action_id, new_state, next_node_id)
+    fn visit(&mut self, active_state: StateId, other_state: StateId, action_id: ActionId, new_state: G) -> Option<Self> {
+        self.node.visit(active_state, other_state, action_id, new_state).into()
     }
 }
 
@@ -121,7 +121,7 @@ impl<'a, N: Node<'a, G>, G: Game, const A: usize , const S: usize> SearchStatist
         todo!()
     }
 
-    fn iter_results(&self, ranges: [Range; 2]) -> &dyn Iterator<Item=(NodeTransition<G>, [Range; 2], Vec<(StateId, StateId, ActionId, Probability)>)> {
+    fn iter_results(&self, ranges: [Range; 2]) -> &dyn Iterator<Item=(NodeTransition<G, Self>, [Range; 2], Vec<(StateId, StateId, ActionId, Probability)>)> {
         todo!()
     }
 }

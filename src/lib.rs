@@ -11,7 +11,7 @@ mod examples {
     mod chess {}
     mod connect4 {
         mod connect4;
-        mod main;
+        // mod main;
         mod policies;
     }
     mod go {}

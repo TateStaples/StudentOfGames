@@ -1,4 +1,4 @@
-use crate::game::Game;
+use crate::game::{FixedGame, FixedSize, Game, HasTurnOrder};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, std::hash::Hash, PartialOrd, Ord)]
 pub enum PlayerId {
@@ -98,14 +98,13 @@ impl TicTacToe {
         false
     }
 }
-
-impl Game<9> for TicTacToe {
+impl FixedSize<9, 1> for TicTacToe {}
+impl Game for TicTacToe {
     type PlayerId = PlayerId;
     type Action = Action;
     type ActionIterator = ActionIterator;
     type PublicInformation = [[[f32; 3]; 3]; 3];
 
-    const MAX_NUM_ACTIONS: usize = 9;
     const MAX_TURNS: usize = 9;
     const NAME: &'static str = "TicTacToe";
     const NUM_PLAYERS: usize = 2;
@@ -143,6 +142,7 @@ impl Game<9> for TicTacToe {
             i: 0,
         }
     }
+
     fn step(&mut self, action: &Self::Action) -> bool {  // TODO: replace this with a result
         assert!(action.row < 3);
         assert!(action.col < 3);

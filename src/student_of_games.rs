@@ -57,11 +57,7 @@ impl<'a , G: Game, P: Policy<G, A, S>, N: ImperfectNode<'a, G>, const A: usize, 
         let mut game = self.starting_game.clone();
 
         while !game.is_over() && actions < self.longest_self_play {
-            // TODO: handle chance nodes
-            tree.safe_resolving(game.clone());  // update the tree to be rooted at the new location
-            // SoG agent
-            let (value, policy) = tree.gt_cfr(tree.root, self.starting_belief.1.clone(), self.self_play_explores, self.self_play_updates_per);  // do your gtcfr search of the tree
-            replay_buffer.lock().unwrap().push((tree.node(tree.root).belief(), value, policy));  // add to the replay buffer
+            let (value, policy) = tree.search(game.public_information());
             if value < self.resign_threshold.unwrap_or(f32::NEG_INFINITY) {  // not worth compute for self-play
                 return
             }

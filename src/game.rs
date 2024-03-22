@@ -11,7 +11,6 @@ pub trait Game: Eq + Hash + Clone + std::fmt::Debug + Send {
     type ActionIterator: Iterator<Item = Self::Action>;
     type PublicInformation: PartialEq + Clone + std::fmt::Debug + Send;
 
-    const MAX_NUM_ACTIONS: usize;
     const MAX_TURNS: usize;
     const NAME: &'static str;
     const NUM_PLAYERS: usize;
@@ -27,3 +26,10 @@ pub trait Game: Eq + Hash + Clone + std::fmt::Debug + Send {
     fn sample_state(public_information: Self::PublicInformation) -> Self;  // Sample a state from the public information
     fn print(&self);  // Output the game state
 }
+
+pub trait FixedSize<const A: usize, const S: usize> {
+    const MAX_NUM_ACTIONS: usize = A;
+    const HIDDEN_STATES: usize = S;
+}
+
+pub trait FixedGame<const A: usize, const S: usize>: Game + FixedSize<A, S>{}
