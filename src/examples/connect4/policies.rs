@@ -1,5 +1,4 @@
-use crate::connect4::Connect4;
-use synthesis::prelude::*;
+
 use tch::{self, nn, Tensor};
 
 pub struct Connect4Net {

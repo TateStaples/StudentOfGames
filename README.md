@@ -25,7 +25,7 @@ Counter factual Regret Minimization
 (Factored-Observation Stochastic Game formalism)
 - World States (w): decision node, terminal node, chance node
 - Actions (a): choice by player
-- History (h): sequence of actions
+- History (h): sequence of actions (A)
 - Observations (O): action updates on Information State
 - Information State (s): The set of public / private indistinguishable histories from observations
 - Policy (P/π): Information State -> Distribution of action probabilities
@@ -67,4 +67,30 @@ Counter factual Regret Minimization
 - Poker
 - Chess
 - Go
-- Rock Paper Scissors
+- Rock Paper Scissors\
+
+
+## Datastructure thoughts
+- Belief Tree vs Game Tree
+  - Belief Tree: Propogate Ranges down, select Game tree, weighted sampling, public observation
+  - Game Tree: private observation
+
+## Pseudocode
+- Self Play
+  - Initialize Game and Search Objects
+  - Loop
+    - Update search
+      - Connect new state to the tree
+    - Do search
+      - Reconstruct the ranges
+      - Propogate the ranges (reach odds)
+      - Calculate Counterfactuals
+      - update metrics
+      - grow
+        - sample root
+        - play through mixed policy until leaf
+        - append leaf
+    - Play action
+
+## Spies Examples
+- State = city & tech

@@ -2,12 +2,12 @@ use crate::game::Game;
 use crate::policies::Policy;
 use std::collections::HashMap;
 
-pub struct PolicyWithCache<'a, G: Game<N>, P: Policy<G, N>, const N: usize> {
+pub struct PolicyWithCache<'a, G: Game, P: Policy<G, N>, const N: usize> {
     pub policy: &'a mut P,
     pub cache: HashMap<G, ([f32; N], [f32; 3])>,
 }
 
-impl<'a, G: Game<N>, P: Policy<G, N>, const N: usize> PolicyWithCache<'a, G, P, N> {
+impl<'a, G: Game, P: Policy<G, N>, const N: usize> PolicyWithCache<'a, G, P, N> {
     pub fn with_capacity(capacity: usize, policy: &'a mut P) -> Self {
         Self {
             policy,
@@ -16,7 +16,7 @@ impl<'a, G: Game<N>, P: Policy<G, N>, const N: usize> PolicyWithCache<'a, G, P, 
     }
 }
 
-impl<'a, G: Game<N>, P: Policy<G, N>, const N: usize> Policy<G, N>
+impl<'a, G: Game, P: Policy<G, N>, const N: usize> Policy<G, N>
     for PolicyWithCache<'a, G, P, N>
 {
     fn eval(&mut self, game: &G) -> ([f32; N], [f32; 3]) {
@@ -31,12 +31,12 @@ impl<'a, G: Game<N>, P: Policy<G, N>, const N: usize> Policy<G, N>
     }
 }
 
-pub struct OwnedPolicyWithCache<G: Game<N>, P: Policy<G, N>, const N: usize> {
+pub struct OwnedPolicyWithCache<G: Game, P: Policy<G, N>, const N: usize> {
     pub policy: P,
     pub cache: HashMap<G, ([f32; N], [f32; 3])>,
 }
 
-impl<G: Game<N>, P: Policy<G, N>, const N: usize> OwnedPolicyWithCache<G, P, N> {
+impl<G: Game, P: Policy<G, N>, const N: usize> OwnedPolicyWithCache<G, P, N> {
     pub fn with_capacity(capacity: usize, policy: P) -> Self {
         Self {
             policy,
@@ -45,7 +45,7 @@ impl<G: Game<N>, P: Policy<G, N>, const N: usize> OwnedPolicyWithCache<G, P, N> 
     }
 }
 
-impl<G: Game<N>, P: Policy<G, N>, const N: usize> Policy<G, N> for OwnedPolicyWithCache<G, P, N> {
+impl<G: Game, P: Policy<G, N>, const N: usize> Policy<G, N> for OwnedPolicyWithCache<G, P, N> {
     fn eval(&mut self, game: &G) -> ([f32; N], [f32; 3]) {
         match self.cache.get(game) {
             Some(pi_v) => *pi_v,

@@ -1,16 +1,15 @@
-use crate::helpers::prelude::Game;
-use crate::policies::Policy;
+use crate::game::Game;
 use rand::{distributions::Distribution, thread_rng, Rng};
 use rand_distr::Dirichlet;
-use crate::game_tree::Outcome;
-use crate::helpers::prelude::*;
-use crate::search_statistics::Range;
+use crate::helpers::config::{ActionSelection, Exploration, Fpu, MCTSConfig, PolicyNoise};
+use crate::policies::Prior;
+use crate::types::Outcome;
 
 type NodeId = u32;
 type ActionId = u8;
 
 #[derive(Debug)]
-struct Node<G: Game, const N: usize> {
+struct Node<G: Game> {
     parent: NodeId,            // 4 bytes   - used for backpropagation
     first_child: NodeId,       // 4 bytes   - low space dynamic graph (should have zero cost abstraction to my format)
     num_children: u8,          // 1 byte
@@ -78,7 +77,7 @@ impl<G: Game, const N: usize> Node<G, N> {
     }
 }
 
-pub struct MCTS<'a, G: Game, P: Policy<G, A, 1>, const A: usize> {
+pub struct MCTS<'a, G: Game, P: Prior<G, A, 1>, const A: usize> {
     root: NodeId,
     offset: NodeId,
     nodes: Vec<Node<G, A>>,
@@ -86,7 +85,7 @@ pub struct MCTS<'a, G: Game, P: Policy<G, A, 1>, const A: usize> {
     cfg: MCTSConfig,
 }
 
-impl<'a, G: Game, P: Policy<G, A, 1>, const A: usize> MCTS<'a, G, P, A> {
+impl<'a, G: Game, P: Prior<G, A, 1>, const A: usize> MCTS<'a, G, P, A> {
     pub fn exploit(explores: usize, cfg: MCTSConfig, policy: &'a mut P, game: G, action_selection: ActionSelection) -> G::Action {
         let mut mcts = Self::with_capacity(explores + 1, cfg, policy, game);
         mcts.explore_n(explores);  // creates 'explores' nodes
@@ -144,7 +143,7 @@ impl<'a, G: Game, P: Policy<G, A, 1>, const A: usize> MCTS<'a, G, P, A> {
     // Fill array with visit rate of each action
     pub fn target_policy(&self, search_policy: &mut [f32; A]) {
         search_policy.fill(0.0);  // initialize
-        let mut total = 0.0;  // TODO: what is this
+        let mut total = 0.0;
         let root = self.node(self.root);
         if root.num_visits == 1.0 {
             // assert!(root.solution.is_some());
@@ -242,7 +241,7 @@ impl<'a, G: Game, P: Policy<G, A, 1>, const A: usize> MCTS<'a, G, P, A> {
 
         let mut best_action = None;
         let mut best_value = None;
-        for child in self.children_of(root) {   // TODO could this be a max()?
+        for child in self.children_of(root) {
             let value = match child.solution {
                 Some(Outcome::Win(turns)) => Some((0.0, turns as f32)),
                 None => match action_selection {
@@ -461,228 +460,13 @@ mod tests {
     use rand::prelude::{SeedableRng, StdRng};
 
     use super::*;
-    use crate::game::HasTurnOrder;
-    use crate::policies::RolloutPolicy;
-
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, std::hash::Hash, PartialOrd, Ord)]
-    pub enum PlayerId {
-        X,
-        O,
-    }
-
-    impl HasTurnOrder for PlayerId {
-        fn prev(&self) -> Self {
-            self.next()
-        }
-
-        fn next(&self) -> Self {
-            match self {
-                PlayerId::O => PlayerId::X,
-                PlayerId::X => PlayerId::O,
-            }
-        }
-    }
-
-    #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-    struct Action {
-        row: usize,
-        col: usize,
-    }
-
-    impl From<usize> for Action {
-        fn from(i: usize) -> Self {
-            let row = i / 3;
-            let col = i % 3;
-            Self { row, col }
-        }
-    }
-
-    impl Into<usize> for Action {
-        fn into(self) -> usize {
-            self.row * 3 + self.col
-        }
-    }
-
-    #[derive(Debug, PartialEq, Eq, std::hash::Hash, Clone)]
-    struct TicTacToe {
-        board: [[Option<PlayerId>; 3]; 3],
-        player: PlayerId,
-        turn: usize,
-    }
-
-    struct ActionIterator {
-        game: TicTacToe,
-        i: usize,
-    }
-
-    impl Iterator for ActionIterator {
-        type Item = Action;
-
-        fn next(&mut self) -> Option<Self::Item> {
-            while self.i < 9 {
-                let action: Action = self.i.into();
-                self.i += 1;
-                if self.game.board[action.row][action.col].is_none() {
-                    return Some(action);
-                }
-            }
-
-            None
-        }
-    }
-
-    impl TicTacToe {
-        fn won(&self, player: PlayerId) -> bool {
-            let p = Some(player);
-            if self.board[0][0] == p && self.board[0][1] == p && self.board[0][2] == p {
-                return true;
-            }
-            if self.board[1][0] == p && self.board[1][1] == p && self.board[1][2] == p {
-                return true;
-            }
-            if self.board[2][0] == p && self.board[2][1] == p && self.board[2][2] == p {
-                return true;
-            }
-            if self.board[0][0] == p && self.board[1][0] == p && self.board[2][0] == p {
-                return true;
-            }
-            if self.board[0][1] == p && self.board[1][1] == p && self.board[2][1] == p {
-                return true;
-            }
-            if self.board[0][2] == p && self.board[1][2] == p && self.board[2][2] == p {
-                return true;
-            }
-            if self.board[0][0] == p && self.board[1][1] == p && self.board[2][2] == p {
-                return true;
-            }
-            if self.board[0][2] == p && self.board[1][1] == p && self.board[2][0] == p {
-                return true;
-            }
-
-            false
-        }
-    }
-
-    impl Game for TicTacToe {
-        type PlayerId = PlayerId;
-        type Action = Action;
-        type ActionIterator = ActionIterator;
-        type PublicInformation = [[[f32; 3]; 3]; 3];
-
-        const MAX_NUM_ACTIONS: usize = 9;
-        const MAX_TURNS: usize = 9;
-        const NAME: &'static str = "TicTacToe";
-        const NUM_PLAYERS: usize = 2;
-        const DIMS: &'static [i64] = &[3, 3, 3];
-
-        fn new() -> Self {
-            Self {
-                board: [[None; 3]; 3],
-                player: PlayerId::X,
-                turn: 0,
-            }
-        }
-
-        fn player(&self) -> Self::PlayerId {
-            self.player
-        }
-
-        fn is_over(&self) -> bool {
-            self.won(self.player) || self.won(self.player.prev()) || self.turn == Self::MAX_TURNS
-        }
-
-        fn reward(&self, player_id: Self::PlayerId) -> f32 {
-            if self.won(player_id) {
-                1.0
-            } else if self.won(player_id.next()) {
-                -1.0
-            } else {
-                0.0
-            }
-        }
-
-        fn iter_actions(&self) -> Self::ActionIterator {
-            ActionIterator {
-                game: self.clone(),
-                i: 0,
-            }
-        }
-        fn step(&mut self, action: &Self::Action) -> bool {  // TODO: replace this with a result
-            assert!(action.row < 3);
-            assert!(action.col < 3);
-            assert!(self.board[action.row][action.col].is_none());
-            self.board[action.row][action.col] = Some(self.player);
-            self.player = self.player.next();
-            self.turn += 1;
-            self.is_over()
-        }
-
-        fn public_information(&self) -> Self::PublicInformation {
-            let mut s = [[[0.0; 3]; 3]; 3];
-            for row in 0..3 {
-                for col in 0..3 {
-                    if let Some(p) = self.board[row][col] {
-                        if p == self.player {
-                            s[0][row][col] = 1.0;
-                        } else {
-                            s[1][row][col] = 1.0;
-                        }
-                    } else {
-                        s[2][row][col] = 1.0;
-                    }
-                }
-            }
-            s
-        }
-
-        fn sample_state(public_information: Self::PublicInformation) -> Self {
-            let mut board = [[None; 3]; 3];
-            for row in 0..3 {
-                for col in 0..3 {
-                    if public_information[0][row][col] > 0.5 {
-                        board[row][col] = Some(PlayerId::X);
-                    } else if public_information[1][row][col] > 0.5 {
-                        board[row][col] = Some(PlayerId::O);
-                    }
-                }
-            }
-            let turn = board.iter().flatten().filter(|&&p| p.is_some()).count();
-            let player = if turn % 2 == 0 {
-                PlayerId::X
-            } else {
-                PlayerId::O
-            };
-            Self {
-                board,
-                player,
-                turn
-            }
-        }
-
-        fn print(&self) {
-            for row in 0..3 {
-                for col in 0..3 {
-                    print!(
-                        "{}",
-                        match self.board[row][col] {
-                            Some(PlayerId::X) => "x",
-                            Some(PlayerId::O) => "o",
-                            None => ".",
-                        }
-                    );
-                }
-                println!();
-            }
-            println!();
-        }
-    }
-
-    // https://en.wikipedia.org/wiki/Tic-tac-toe
+    use crate::examples::tictactoe::tictactoe::*;
+    use crate::policies::RolloutPrior;
 
     #[test]
     fn test_solve_win() {
         let mut rng = StdRng::seed_from_u64(0);
-        let mut policy = RolloutPolicy { rng: &mut rng };
+        let mut policy = RolloutPrior { rng: &mut rng };
         let mut game = TicTacToe::new();
         game.step(&Action { row: 0, col: 0 });
         game.step(&Action { row: 0, col: 2 });
@@ -727,7 +511,7 @@ mod tests {
     #[test]
     fn test_solve_loss() {
         let mut rng = StdRng::seed_from_u64(0);
-        let mut policy = RolloutPolicy { rng: &mut rng };
+        let mut policy = RolloutPrior { rng: &mut rng };
         let mut game = TicTacToe::new();
         game.step(&Action { row: 0, col: 0 });
         game.step(&Action { row: 0, col: 2 });
@@ -776,7 +560,7 @@ mod tests {
     #[test]
     fn test_solve_draw() {
         let mut rng = StdRng::seed_from_u64(0);
-        let mut policy = RolloutPolicy { rng: &mut rng };
+        let mut policy = RolloutPrior { rng: &mut rng };
         let mut game = TicTacToe::new();
         game.step(&Action { row: 0, col: 0 });
         game.step(&Action { row: 1, col: 1 });
@@ -825,7 +609,7 @@ mod tests {
     #[test]
     fn test_add_noise() {
         let mut rng = StdRng::seed_from_u64(0);
-        let mut policy = RolloutPolicy { rng: &mut rng };
+        let mut policy = RolloutPrior { rng: &mut rng };
         let game = TicTacToe::new();
         let mut mcts = MCTS::with_capacity(
             1601,

@@ -1,14 +1,15 @@
+use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use crate::helpers::prelude::*;
-use crate::game::Game;
-use crate::game_tree::{ActionId, Outcome};
-use crate::gt_cfr::{GtCfr, sample_policy};
-use crate::policies::Policy;
-use crate::search_statistics::{ActionPolicy, Belief, ImperfectNode, Probability};
+use crate::game::{Game, ImperfectGame};
+use crate::gt_cfr::{GtCfr};
+use crate::policies::Prior;
+use crate::search_statistics::{ImperfectNode};
+use crate::types::{AbstractCounterfactual, AbstractPolicy, AbstractRange, ActionId, Belief, Reward, Probability};
+use crate::helpers::config::Exploration;
 
 
-pub type ReplayBuffer<G: Game, const A: usize, const S: usize> = Arc<Mutex<Vec<(Belief<G,A,S>, Outcome, ActionPolicy)>>>;  // distribution of information states for each player
+pub type ReplayBuffer<G: Game, Range: AbstractRange, Counterfactuals: AbstractCounterfactual, Policy: AbstractPolicy> = Arc<Mutex<Vec<(Belief<G,Range>, Counterfactuals, Policy)>>>;  // distribution of information states for each player
 
 struct TrainingConfigs {
     explores: usize,  // number of nodes to expand
@@ -20,19 +21,22 @@ struct TrainingConfigs {
     move_greedy: u8,  // after this number of actions, be greedy for training
     update_prob: Probability,  // probability of updating the network
 }
-struct Trainer<'a, G: Game, const A: usize, const S: usize> {
+
+struct Trainer<'a, G: ImperfectGame + 'a, P: Prior<G, Counterfactuals, Range, Policy>, N: ImperfectNode<'a, G, Counterfactuals, Range, Policy>, Counterfactuals: AbstractCounterfactual, Range: AbstractRange, Policy: AbstractPolicy> {
     starting_game: G,
-    starting_belief: Belief<G, A, S>,
-    resign_threshold: Option<Outcome>,
+    starting_belief: Belief<G, Range>,
+    resign_threshold: Option<Reward>,
     longest_self_play: u8,
     greedy_depth: u8,
     self_play_explores: usize,
     self_play_updates_per: usize,
     self_play_explore_chance: Probability,
+    _phantom: PhantomData<(&'a P, N, Counterfactuals, Policy)>,
 }
-impl<'a , G: Game, P: Policy<G, A, S>, N: ImperfectNode<'a, G>, const A: usize, const S: usize, const C: usize> Trainer<'a, G, A, S> {
+impl<'a , G: ImperfectGame, P: Prior<G, Counterfactuals, Range, Policy>, N: ImperfectNode<'a, G, Counterfactuals, Range, Policy>, Counterfactuals: AbstractCounterfactual, Range: AbstractRange, Policy: AbstractPolicy>
+    Trainer<'a, G, P, N, Counterfactuals, Range, Policy, > {
     // Learn from self-play. Important
-    pub fn learn(&self, capacity: usize, play_threads: u8, prior: P, configs: TrainingConfigs) {
+    pub fn learn(&self, capacity: usize, play_threads: u8, mut prior: P, configs: TrainingConfigs) {
         let replay_buffer = Arc::new(Mutex::new(Vec::new()));
         let training = false;
         let mut games = 0;
@@ -49,21 +53,24 @@ impl<'a , G: Game, P: Policy<G, A, S>, N: ImperfectNode<'a, G>, const A: usize, 
         }
 
         // train network
+        prior.learn();
         self.save();  // TODO: add a termination condition
     }
-    fn self_play(&self, mut tree: GtCfr<G, P, N, A, S>, replay_buffer: ReplayBuffer<G, A, S>) {
+    fn self_play<'b>(&self, mut strategy: GtCfr<'a, 'b, G, P, N, Counterfactuals, Range, Policy>, replay_buffer: ReplayBuffer<G, Range, Counterfactuals, Policy>) {
         let mut actions = 0;
+        //  TODO: why does this start with a tree: shouldn't it create it
         let mut action: ActionId; // play self
         let mut game = self.starting_game.clone();
+        let do_not_resign = false;  // coin flip with probability p_no resign
 
         while !game.is_over() && actions < self.longest_self_play {
-            let (value, policy) = tree.search(game.public_information());
+            let (value, policy) = strategy.search(game.public_information());
             if value < self.resign_threshold.unwrap_or(f32::NEG_INFINITY) {  // not worth compute for self-play
                 return
             }
-            let self_play_policy = (1 - self.self_play_explore_chance) * policy + self.self_play_explore_chance * [1/A; A];
+            let self_play_policy = policy.mix_in(Policy::uniform(), self.self_play_explore_chance);
             if actions < self.greedy_depth {  // explore shallowly then be greedy for better approximation
-                action = sample_policy(self_play_policy);
+                action = self_play_policy.sample();  
             } else {  // greedy at depth
                 action = policy.arg_max();  // take "best" action - greedy
             }
@@ -73,3 +80,4 @@ impl<'a , G: Game, P: Policy<G, A, S>, N: ImperfectNode<'a, G>, const A: usize, 
         }
     }
 }
+

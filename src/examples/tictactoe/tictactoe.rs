@@ -1,7 +1,7 @@
 use crate::game::{FixedGame, FixedSize, Game, HasTurnOrder};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, std::hash::Hash, PartialOrd, Ord)]
-pub enum PlayerId {
+pub(crate) enum PlayerId {
     X,
     O,
 }
@@ -20,9 +20,9 @@ impl HasTurnOrder for PlayerId {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-struct Action {
-    row: usize,
-    col: usize,
+pub struct Action {
+    pub(crate) row: usize,
+    pub(crate) col: usize,
 }
 
 impl From<usize> for Action {
@@ -40,7 +40,7 @@ impl Into<usize> for Action {
 }
 
 #[derive(Debug, PartialEq, Eq, std::hash::Hash, Clone)]
-struct TicTacToe {
+pub struct TicTacToe {
     board: [[Option<PlayerId>; 3]; 3],
     player: PlayerId,
     turn: usize,
@@ -143,7 +143,7 @@ impl Game for TicTacToe {
         }
     }
 
-    fn step(&mut self, action: &Self::Action) -> bool {  // TODO: replace this with a result
+    fn step(&mut self, action: &Self::Action) -> bool {
         assert!(action.row < 3);
         assert!(action.col < 3);
         assert!(self.board[action.row][action.col].is_none());

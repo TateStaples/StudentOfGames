@@ -1,73 +1,130 @@
-use std::collections::{HashMap, HashSet};
-use crate::game::Game;
-use crate::game_tree::{ActionId, Counterfactuals, Node, NodeTransition, Outcome, StateId, TransitionMatrix};
-use crate::policies::Policy;
+// Expand game tree with imperfect information and statistics for search
 
-pub type Probability = f32;
-pub type Range = Vec<(StateId, Probability)>;
-pub type Belief<G: Game, const A: usize, const S: usize> = (G::PublicInformation, [Range; 2]);
-pub type ActionPolicy = Vec<(Probability, ActionId)>;
-// consider making a torch implementation of this
-pub trait SearchStatistics<'a, G: Game> {  // Stores the statistics for the search in CFR
-    // DeepStack: range, values, regrets, reach prob
-    fn initialize(&mut self, ranges: [Range; 2]);
-    fn reset(&mut self);
-    fn action_probability(&self, state_id: StateId, action_id: ActionId) -> Probability { self.cfr_policy(state_id)[action_id]}
-    fn visits(&self) -> f32;
-    fn solved(&self) -> bool { false }
-    fn value(&self) -> Option<Counterfactuals>;
-    fn cfr_policy(&self, state_id: StateId) -> ActionPolicy;
-    fn range(&self, player: G) -> Range;
+use crate::game::{Game, ImperfectGame};
+use crate::game_tree::{PrivateNode, NodeTransition};
+use crate::types::{AbstractCounterfactual, AbstractPolicy, AbstractRange, PrivateObservation, Reward, StateId};
 
-    fn update_nodes_below(&mut self, state_id: StateId, action_id: ActionId);
-    fn update_action_quality(&mut self, state_id: StateId, action_id: ActionId, value: Outcome, p: Probability);
-    fn normalize(&mut self);
-    fn iter_results(&self, ranges: &[Range; 2]) -> impl Iterator<Item=(NodeTransition<G, Self>, [Range; 2], Vec<(StateId, ActionId, Probability)>)>;  // TODO
+// Imperfect Information Extensive-Form
+pub trait SearchStatistics<'a, N: PrivateNode<'a, G>, G: Game + 'a, Counterfactuals: AbstractCounterfactual, Range: AbstractRange, Policy: AbstractPolicy> : PrivateNode<'a, G> {  // Stores the statistics for the search in CFR
+    // DeepStack: range, values, regrets, reach prob [repeat]
+    fn visits(&self) -> f32;                            // Number of visits for growth step
+    fn add_visit(&mut self);                            // Add a new visit
+    fn reward(&self) -> Reward;                         // Reward for this action
+    fn calc_policy(&self) -> Policy;                    // Calculated policy from CFR alg stats: r(s,a) = v(s,a) - EV(policy), Q(s,a) += r(s,a) [min value of 0], π(s,a) = percentage of Q
+    fn reset(&mut self);                                // clear all statistics before a new search
+
+    fn solved(&self) -> bool { false }                  // Reward is fixed (set in perfect info)
+    fn player(&self) -> G::PlayerId;
+
+    fn update_children(&mut self, child: Option<&NodeTransition<'a, G, Self>>, counterfactuals: Counterfactuals);
+    fn update_value(&mut self);
 }
+
+// Combine the transition behavior of a node with the statistics of the search
+// Normal game tree with a blanket thrown over it
+pub trait ImperfectTree<'a, G: ImperfectGame + 'a, N: PrivateNode<'a, G>, Range: AbstractRange, ActionPolicy: AbstractPolicy>{
+    fn iter_results(&self, ranges: &[Range; 2]) -> impl Iterator<Item=(Option<&Self>, [Range; 2])>;
+    fn histories(&self) -> Vec<N>;
+    fn expand(&mut self, ranges: [Range; 2], policy: ActionPolicy) -> Option<&Self>;
+}
+//
+/*
+// Specific implementation for fixed size (state size and action size) games
+#[derive(Clone, Copy)]
+struct FixedRange<const S: usize> {
+    range: [Probability; S]
+} 
+impl<const S: usize> AbstractRange for FixedRange<S> {
+    fn new() -> Self { Self { range: [(1 / S) as Probability; S] }}
+    fn eval(&self, state_id: StateId) -> Probability {
+        self.range[state_id]
+    }
+    fn mix_in(&self, other: &Self, p: Probability) -> Self {
+        todo!()
+    }
+}
+#[derive(Clone, Copy)]
+struct FixedCounterfactuals<const A: usize, const S: usize> {
+    counterfactuals: [[Outcome; A]; S]
+} 
+impl<const A: usize, const S: usize> AbstractCounterfactual for FixedCounterfactuals<A, S> {
+    fn new() -> Self { Self { counterfactuals: [[0.0; A]; S] }}
+    fn eval(&self, state_id: StateId) -> Outcome {
+        self.counterfactuals[state_id].iter().sum()
+    }
+}
+#[derive(Clone, Copy)]
+struct FixedActionPolicy<const A: usize> {
+    policy: [Probability; A]
+} 
+impl<const A: usize> AbstractPolicy for FixedActionPolicy<A> {
+    fn new() -> Self { Self { policy: [1.0 / A as Probability; A] }}
+    fn eval(&self, action_id: ActionId) -> Probability {
+        self.policy[action_id]
+    }
+    fn sample(&self) -> ActionId {
+        todo!()
+    }
+}
+
 pub struct FixedStatistics<'a, G: Game, const A: usize, const S: usize> {
-    node: TransitionMatrix<'a, G, A, S>,
+    node: [[[Option<NodeTransition<'a, G, Self>>; A]; S]; S],
     nodes_below: [[f32; A]; S],
     action_quality: [[f32; A]; S],
     visits: f32,
     aggregate_value: [Outcome; S],
+    ranges: [FixedRange<S>; 2]
 }
 
-
-impl<'a, G: Game, const A: usize, const S: usize> Node<'a, G> for FixedStatistics<'a, G, A, S> {
-    fn new(public_information: G::PublicInformation, transition_map: HashMap<(StateId, StateId, ActionId), NodeTransition<G, Self>>) -> Self {
-        Self {
-            node: TransitionMatrix::new(public_information, transition_map),
-            nodes_below: [[0.0; A]; S],
-            action_quality: [[0.0; A]; S],
-            visits: 0.0,
-            aggregate_value: [0.0; S],
-        }
+impl<'a, G: Game, const A: usize, const S: usize> FixedStatistics<'a, G, A, S> {
+    fn average_value(&self) -> [Outcome; S] {
+        todo!()
     }
-
+}
+impl<'a, G: Game, const A: usize, const S: usize> 
+    Node<'a, G> for FixedStatistics<'a, G, A, S> {
     fn leaf(&self) -> bool {
         self.node.leaf()
     }
 
-    fn public_state(&self) -> &G::PublicInformation {
-        self.node.public_state()
+    fn transition(&self, state_1: StateId, state_2: StateId, action_id: ActionId) -> (StateId, &NodeTransition<'a, G, Self>) {
+        // self.node.transition(state_1, state_2, action_id).into()
+        todo!()
     }
 
-    fn transition(&self, state_1: StateId, state_2: StateId, action_id: ActionId) -> (StateId, &NodeTransition<G, Self<>>) {
-        self.node.transition(state_1, state_2, action_id).into()
-    }
-
-    fn children(&self) -> HashSet<NodeTransition<G, Self>> {
-        self.node.children().into()
+    fn children(&self) -> HashSet<&NodeTransition<'a, G, FixedStatistics<'a, G, A, S>>> {
+        // self.node.children().into()
+        todo!()
     }
 
     fn visit(&mut self, active_state: StateId, other_state: StateId, action_id: ActionId, new_state: G) -> Option<Self> {
-        self.node.visit(active_state, other_state, action_id, new_state).into()
+        // self.node.visit(active_state, other_state, action_id, new_state).into()
+        todo!()
     }
 }
 
-impl<'a, N: Node<'a, G>, G: Game, const A: usize , const S: usize> SearchStatistics<'a, G> for FixedStatistics<'a, G, A, S> {
-    fn initialize(&mut self, prior: &impl Policy<G, A, S>) {
+impl<'a, G: Game + 'a, const A: usize , const S: usize> 
+    SearchStatistics<'a, G, FixedCounterfactuals<A, S>, FixedRange<S>, FixedActionPolicy<A>> for FixedStatistics<'a, G, A, S> {
+    fn visits(&self) -> f32 {
+        // self.nodes_below.iter().map(|x| x.iter().sum()).sum()
+        todo!()
+    }
 
+    fn value(&self) -> Option<FixedCounterfactuals<A, S>> {  //
+        // self.aggregate_value.iter().map(|x| x/self.visits).collect()
+        todo!()
+    }
+
+    fn cfr_policy(&self, state_id: StateId) -> FixedActionPolicy<A> {
+        let action_q = self.action_quality[state_id];
+        // let sum = action_q.iter().sum();
+        // action_q.iter().map(|x| x/sum).collect()
+        todo!()
+    }
+
+    fn range(&self, player: G::PlayerId) -> FixedRange<S> {
+        // self.ranges[player.into()].clone()
+        todo!()
     }
 
     fn reset(&mut self) {
@@ -77,53 +134,23 @@ impl<'a, N: Node<'a, G>, G: Game, const A: usize , const S: usize> SearchStatist
         self.visits = 1.0;
     }
 
-    fn action_probability(&self, state_id: StateId, action_id: ActionId) -> Probability {
-        let action_q = self.action_quality[state_id];
-        action_q[action_id] / action_q.iter().sum()
-    }
-
-    fn visits(&self) -> f32 {
-        self.nodes_below.iter().map(|x| x.iter().sum()).sum()
-    }
-
-    fn value(&self) -> Counterfactuals {  //
-        self.aggregate_value.iter().map(|x| x/self.visits).collect()
-    }
-
-    fn cfr_policy(&self, state_id: StateId) -> ActionPolicy {
-        let action_q = self.action_quality[state_id];
-        let sum = action_q.iter().sum();
-        action_q.iter().map(|x| x/sum).collect()
-    }
-
-    fn range(&self, player: G) -> Range {
+    fn update_children(&mut self, child: Option<&NodeTransition<'a, G, Self>>, counterfactuals: FixedCounterfactuals<A, S>) {
         todo!()
     }
 
-    fn update_nodes_below(&mut self, state_id: StateId, action_id: ActionId) {
-        self.nodes_below[state_id][action_id] += 1.0;
-    }
-
-    fn update_action_quality(&mut self, state_id: StateId, action_id: ActionId, value: Outcome, p: Probability) {
-        // r(s,a) = v(s,a) - EV(policy)
-        // Q(s,a) += r(s,a) [min value of 0]
-        let state = &mut self.action_quality[state_id];
-        for a in 0..A {
-            if a == action_id {
-                state[a] += value;  // update my quality
-            } else {
-                state[a] -= value * p;  // decrement other quality
-            }
-        }
-    }
-
-    fn normalize(&mut self) {
-        todo!()
-    }
-
-    fn iter_results(&self, ranges: [Range; 2]) -> &dyn Iterator<Item=(NodeTransition<G, Self>, [Range; 2], Vec<(StateId, StateId, ActionId, Probability)>)> {
+    fn update_value(&mut self) {
         todo!()
     }
 }
+impl<'a, G: ImperfectGame + 'a, const A: usize, const S: usize> 
+    ImperfectNode<'a, G, FixedCounterfactuals<A, S>, FixedRange<S>, FixedActionPolicy<A>> for FixedStatistics<'a, G, A, S> {
+    fn public_state(&self) -> G::PublicInformation {
+        todo!()
+    }
 
-pub trait ImperfectNode<'a, G: Game>: Node<'a, G> + SearchStatistics<'a, G>{}
+    fn iter_results(&self, ranges: &[FixedRange<S>; 2]) -> impl Iterator<Item=(Option<&NodeTransition<'a, G, Self>>, [FixedRange<S>; 2])> {
+        vec![].into_iter()  // TODO
+    }
+    
+}
+*/

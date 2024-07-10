@@ -72,6 +72,7 @@ pub struct EvaluationConfig {
     pub num_games_against_rollout: usize,
 }
 
+
 #[derive(Debug, Clone)]
 pub struct LearningConfig {
     // general params
