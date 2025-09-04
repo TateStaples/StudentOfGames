@@ -1,9 +1,14 @@
+// #![feature(inherent_associated_types)]
+#![feature(hash_extract_if)]
+#![feature(trait_alias)]
+
+// 
 // mod alpha_zero;
 pub mod helpers{
-    pub mod config;
+    // pub mod config;
     // mod data;
     // mod evaluator;
-    pub mod prelude;
+    // pub mod prelude;
     // pub mod utils;
 }
 
@@ -22,14 +27,21 @@ mod examples {
     // }
 }
 
-pub mod game;
-// mod mcts;
-pub mod policies;
-mod gt_cfr;
-mod game_tree;
-mod search_statistics;
-mod student_of_games;
-mod cfr;
-mod minimax;
-mod types;
+// pub mod game;
+// // mod mcts;
+// pub mod policies;
+// mod gt_cfr;
+// mod game_tree;
+// mod search_statistics;
+// mod student_of_games;
+// mod cfr;
+// mod minimax;
+// mod types;
+// mod fresh;
+// mod obscuro;
+// mod chat;
+
+// mod main;
+//
+// mod chat;
 // mod alpha_zero;
