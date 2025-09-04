@@ -1,7 +1,7 @@
 // Expand game tree with imperfect information and statistics for search
 
 use crate::game::{Game, ImperfectGame};
-use crate::game_tree::{PrivateNode, NodeTransition};
+use crate::game_tree::{PrivateNodeId, PrivateNode, PublicNode};
 use crate::types::{AbstractCounterfactual, AbstractPolicy, AbstractRange, PrivateObservation, Reward, StateId};
 
 // Imperfect Information Extensive-Form
@@ -16,17 +16,11 @@ pub trait SearchStatistics<'a, N: PrivateNode<'a, G>, G: Game + 'a, Counterfactu
     fn solved(&self) -> bool { false }                  // Reward is fixed (set in perfect info)
     fn player(&self) -> G::PlayerId;
 
-    fn update_children(&mut self, child: Option<&NodeTransition<'a, G, Self>>, counterfactuals: Counterfactuals);
+    fn update_children(&mut self, child: Option<PrivateNodeId>, counterfactuals: Counterfactuals);
     fn update_value(&mut self);
 }
 
-// Combine the transition behavior of a node with the statistics of the search
-// Normal game tree with a blanket thrown over it
-pub trait ImperfectTree<'a, G: ImperfectGame + 'a, N: PrivateNode<'a, G>, Range: AbstractRange, ActionPolicy: AbstractPolicy>{
-    fn iter_results(&self, ranges: &[Range; 2]) -> impl Iterator<Item=(Option<&Self>, [Range; 2])>;
-    fn histories(&self) -> Vec<N>;
-    fn expand(&mut self, ranges: [Range; 2], policy: ActionPolicy) -> Option<&Self>;
-}
+
 //
 /*
 // Specific implementation for fixed size (state size and action size) games

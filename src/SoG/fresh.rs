@@ -3,7 +3,7 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 use rand::Rng;
 use crate::policies::Prior;
-
+// TODO: make reward positive for player 1 and negative for player 2 - need to adapt all infostates and reward functions to make this work
 // Task list
 // 1. Figure out how to handle infostates for non-active players (update the way we store counterfactuals and up propagate them)
 // 2. Two Spies Game format: Public(control,reveals),State(city, xp, tech), Private(exact city [S = city index]), Action(move_to_city, attack, tech)
@@ -54,7 +54,7 @@ pub trait Game: Eq + Hash + Clone + std::fmt::Debug + Send {
     fn new() -> Self;  // Default initialization
     fn player(&self) -> Self::PlayerId;  // The active player
     fn is_over(&self) -> bool;
-    fn reward(&self, player_id: Self::PlayerId) -> f32;  // The reward for the player getting to active state.
+    fn reward(&self, player_id: Self::PlayerId) -> Reward;  // The reward for the player getting to active state.
     fn iter_actions(&self) -> Self::ActionIterator;
     fn step(&mut self, action: &Self::Action) -> (PublicObservation, PrivateObservation);  // Implement action and return whether done
     fn print(&self);  // Output the game state
@@ -82,14 +82,13 @@ pub struct FixedStrategy<const A: usize> { strategy: [Probability; A] }
 #[derive(Clone, Copy)]
 pub struct FixedRange<const S: usize> { range: [Probability; S] }
 #[derive(Clone, Copy)]
-pub struct FixedCounterfactuals<const A: usize> { cfvs: [Reward; A] }  // FIXME: I think this should be defined along S
+pub struct FixedCounterfactuals<const S: usize> { cfvs: [Reward; S] }  // FIXME: I think this should be defined along S
 
 #[derive(Clone)]
 pub struct BeliefState<G: FixedGame<A, S>, const A: usize, const S: usize> {
     public_observation: PublicObservation,                              // The public observation to get here
     first_child: PublicNodeId,                                          // Tree structure
     num_children: usize,
-    ranges: [FixedRange<S>; 2],                                      // The reach probability of each infostate
     infostates: [InfoState<A>; S],                                      // Search statistics for each infostate
     histories: Vec<PrivateNodeId>,                                       // Probably fine for this to be on the heap as they shouldn't be loaded that frequently
     location: NodeType,
@@ -161,7 +160,6 @@ pub struct BeliefState<G: FixedGame<A, S>, const A: usize, const S: usize> {
                 public_observation,
                 first_child: 0,
                 num_children: 0,
-                ranges: [FixedRange{range:[0.0;S]}, FixedRange{range:[0.0;S]}],
                 infostates,
                 histories: children,
                 location: node_type,
@@ -171,12 +169,12 @@ pub struct BeliefState<G: FixedGame<A, S>, const A: usize, const S: usize> {
         }
     }
     fn clear(&mut self) {
-        self.ranges = [FixedRange{range:[0.0;S]}, FixedRange{range:[0.0;S]}];
+        for state in self.infostates.iter_mut() {
+            state.reach_prob = 0.0;
+        }
     }
     fn infostate(&self, state_id: InfoStateId) -> &InfoState<A> { &self.infostates[state_id] }  
     fn mut_infostate(&mut self, state_id: InfoStateId) -> &mut InfoState<A> { &mut self.infostates[state_id] }
-    fn reach_prob(&self, action_id: ActionId, player: G::PlayerId) -> Probability { self.ranges[player.into()].range[action_id] }
-    fn range(&self, player: G::PlayerId) -> &FixedRange<S> { &self.ranges[player.into()] }
     fn active_player(&self) -> G::PlayerId { todo!() }
 }
 
@@ -184,9 +182,9 @@ pub struct BeliefState<G: FixedGame<A, S>, const A: usize, const S: usize> {
 #[derive(Clone, Copy)]
 struct InfoState<const A: usize> {  
     parent: InfoStateId,                            // Parent infostate it its respective public node
-    action: ActionId,                               // Action taken to get to this state
-    state_id: InfoStateId,                          // State ID in the public node            
-    counterfactuals: FixedCounterfactuals<A>,       // Counterfactuals (Also hold quality) for each action 
+    action: ActionId,                               // FIXME: assume only one action can transfer between infostates (obviously not true in the case of poker)
+    state_id: InfoStateId,                          // State ID in the public node
+    reach_prob: Probability,                        // Reach probability of this infostate from the root
     strategy: FixedStrategy<A>,                     // Strategy for each action (probability of taking each action)
     visits: [f32; A],                               // Number of times each action has been visited (f32 for faster math)
     quality: [f32; A],                              // Aggregate Quality of each action (how good it is) - used for strategy
@@ -197,7 +195,7 @@ impl<const A: usize> InfoState<A> {
             parent: 0,
             action: 0,
             state_id: 0,
-            counterfactuals: FixedCounterfactuals{cfvs:[0.0;A]},
+            reach_prob: 0.0,
             strategy: FixedStrategy { strategy:[0.0;A]},
             visits: [0.0;A],
             quality: [0.0;A],
@@ -269,12 +267,12 @@ impl<'a, 'b, G: FixedGame<A, S>, CPVN: Prior<G, A, S>, const A: usize, const S: 
 GtCfr<'a, 'b, G, CPVN, A, S> {
     // ---------- Usage ---------- //
     // Create the game tree, reserving space for 'capacity' nodes without reallocation
-    pub fn with_capacity(initial_game: G, ranges: [FixedRange<S>;2], capacity: usize, prior: &'b CPVN, search_explorations: usize, updates_per: usize) -> Self {
+    pub fn with_capacity(initial_game: G, capacity: usize, prior: &'b CPVN, search_explorations: usize, updates_per: usize) -> Self {
         let infostate = InfoState {  // TODO: this is not correct
             parent: 0,
             action: 0,
             state_id: 0,
-            counterfactuals: FixedCounterfactuals{cfvs:[0.0;A]},
+            reach_prob: 1.0,
             strategy: FixedStrategy { strategy:[0.0;A]},
             visits: [1.0;A],
             quality: [0.0;A],
@@ -289,7 +287,6 @@ GtCfr<'a, 'b, G, CPVN, A, S> {
             public_observation: 0,
             first_child: 0,
             num_children: 0,
-            ranges,
             histories,                                                  // History is just the initial state of the game (this might need to be different in fixed games -> setup as chance node?)
             infostates: states,                                              // Initialize the infostates
             location: NodeType::Leaf,                                   // Start as a leaf
@@ -320,6 +317,10 @@ GtCfr<'a, 'b, G, CPVN, A, S> {
 
     pub(crate) fn update(&mut self, observation: PublicObservation) -> PublicNodeId {  // TODO: add some way to track individual states (be stateful)
         let pbs = self.pbs(self.root);
+        // if pbs is a leaf, expand it (might happen at the start to populate all possible states)
+        if pbs.location() == NodeType::Leaf {
+            BeliefState::expand(self.root, &mut self.tree, &mut self.imperfect_tree);
+        }
         self.root = pbs.transition(observation, &self.imperfect_tree);
         self.root
     }
@@ -366,21 +367,20 @@ GtCfr<'a, 'b, G, CPVN, A, S> {
             for action_id in 0..A {
                 if let Some(step) = history.step(action_id) {
                     let action_chance = state.action_probability(action_id);
-                    let child = self.node(step);
-                    let child_state = child.state_id;
                     let reach_prob_update = history.reach_prob * action_chance;
-                    updates.push((step, child.public_id, child_state, reach_prob_update));
+                    updates.push((step, reach_prob_update));
                 }
             }
         }
 
         // Apply collected updates
-        for (step, public_id, child_state, reach_prob_update) in updates {
+        for (step, reach_prob_update) in updates {
             let child = &mut self.tree[step as usize];
             child.reach_prob = reach_prob_update;
-            let child_pbs = &mut self.imperfect_tree[public_id];
-            child_pbs.ranges[child_state[0]].range[child_state[0]] += reach_prob_update;
-            child_pbs.ranges[child_state[1]].range[child_state[1]] += reach_prob_update;
+            let info_state = self.mut_active_info(step);
+            info_state.reach_prob += reach_prob_update;
+            // TODO: make sure you don't need to update inactive player (i think this should implicitly update at higher levels of recursion tree)
+            
         }
 
         // Recursive calls after mutable operations
@@ -388,23 +388,21 @@ GtCfr<'a, 'b, G, CPVN, A, S> {
             self.cfr_reach(child_id);
         }
     }
-    fn cfr_regret(&mut self, node_id: PublicNodeId) -> [Reward; S] {  // CPVN define Counterfactuals and the infostate level
+    fn cfr_regret(&mut self, node_id: PublicNodeId) -> [[(InfoStateId, Probability, Reward); S]; 2] {  // CPVN define Counterfactuals and the infostate level
         let node = self.pbs(node_id);
         match node.location() {  // What if we don't store the counterfactuals in the infostates and just qualities and strategies?
             NodeType::Inner => {  // weighting over children
                 let children_ids: Vec<PublicNodeId> = node.children().iter().cloned().collect();
-                for child_id in children_ids.iter() {
-                    self.cfr_regret(*child_id);
-                }
                 
                 let mut v: [[Reward; A]; S] = [[0.0; A]; S];
-                for child_id in children_ids {
-                    let child = self.pbs(child_id);
-                    for (child_state, child_info) in child.infostates.iter().enumerate() { // TODO: figure out what to do with inactive player
-                        let reach_prob = child.ranges[0].range[child_state];  // FIXME this won't work - need to change the data structure
-                        let state = child_info.parent;
-                        let action = child_info.action;
-                        v[state][action] += reach_prob * child_info.counterfactuals.cfvs[action];
+                for child_belief in children_ids {
+                    let counterfactuals = self.cfr_regret(child_belief)[0];  // TODO: index by player instead
+                    
+                    for (info, prob, reward) in counterfactuals {
+                        // let reach_prob = info.reach_prob;  // FIXME this won't work - need to change the data structure
+                        let state = info.parent;
+                        let action = info.action;
+                        v[state][action] += prob * reward;  // NOTE this will decay really fast (need to divide by current_info.reach_prob)
                     }
                 }
                 let node = self.mut_pbs(node_id);
@@ -429,22 +427,21 @@ GtCfr<'a, 'b, G, CPVN, A, S> {
 
             },
             NodeType::Leaf => {  // prior eval
-                let (val1, val2) = self.eval(node_id);
-                let node = self.mut_pbs(node_id);
-                for (state_id, (v1, v2)) in val1.iter().zip(val2).enumerate() {
-                    node.infostates[state_id].counterfactuals = *v1;  // TODO: figure out what to do with the other infostates (non-active player)
-                }
-                
+                let (v, _) = self.eval(node_id);
+                v.map(|c| {
+                    c.cfvs.iter().enumerate().map(|(state_id, reward)| v.eval(0))
+                })
             },
             NodeType::Terminal => {  // game terminal eval
+                let result = self.node(node.histories[0]).game.reward(self.node(node.histories[0]).active_player());
                 let histories = node.histories.clone();
                 for history in histories {
                     let history = self.node(history);
-                    let reward = history.game.reward(history.active_player());
+                    let reward: Reward = history.game.reward(history.active_player());
                     let state_id = history.active_state();
                     let state = self.mut_active_info(state_id);
                     for action in 0..A {
-                        state.counterfactuals.cfvs[action] = reward;
+                        state.cfvs[action] = reward;
                     }
                 }
                 
@@ -457,9 +454,7 @@ GtCfr<'a, 'b, G, CPVN, A, S> {
     fn next_pbs_id(&self) -> PublicNodeId { self.imperfect_tree.len() as PublicNodeId }
     fn node(&self, node_id: PrivateNodeId) -> &History<G> { &self.tree[node_id as usize] }
     fn pbs(&self, node_id: PublicNodeId) -> &BeliefState<G, A, S> { &self.imperfect_tree[node_id as usize] }
-    #[inline]
     fn mut_node(&mut self, node_id: PrivateNodeId) -> &mut History<G> { &mut self.tree[node_id as usize] }
-    #[inline]
     fn mut_pbs(&mut self, node_id: PublicNodeId) -> &mut BeliefState<G, A, S> { &mut self.imperfect_tree[node_id as usize] }
     fn active_info(&self, node_id: PrivateNodeId) -> &InfoState<A> {
         let node = self.node(node_id);
@@ -483,7 +478,17 @@ GtCfr<'a, 'b, G, CPVN, A, S> {
         let pbs = self.pbs(node.public_id);
         &pbs.infostates[node.state_id[player.into()]]
     }
-    fn eval(&self, node_id: PublicNodeId) -> ([FixedCounterfactuals<A>; S], [FixedStrategy<A>; S]) {
+    fn mut_inactive_info(&mut self, node_id: PrivateNodeId) -> &mut InfoState<A> {
+        let mut node = &self.tree[node_id];
+        let target_player = node.active_player().next();
+        while node.game.player() != target_player {
+            node = &self.tree[node.parent];
+        }
+        let player = node.active_player();
+        let pbs = &mut self.imperfect_tree[node.public_id];
+        &mut pbs.infostates[node.state_id[player.into()]]
+    }
+    fn eval(&self, node_id: PublicNodeId) -> ([FixedCounterfactuals<S>; 2], [FixedStrategy<A>; S]) {
         let model = self.prior;
         model.eval(self.pbs(node_id))
     }
