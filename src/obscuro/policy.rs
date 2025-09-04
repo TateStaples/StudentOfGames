@@ -9,13 +9,14 @@ use crate::obscuro::utils::*;
 /// Implements the CFR+ accumulation and action probability calculation
 #[derive(Clone, Debug)]
 pub struct Policy<A: ActionI> {
-    pub multiplier: i8, // +1 for maximizing player, -1 for minimizing (in zero-sum CFV space)
+    pub multiplier: i8, // +1 for maximizing player (or chance), -1 for minimizing (in zero-sum CFV space)
     pub actions: Vec<A>,
     pub expectations: Vec<Reward>,
     pub expansions: Vec<usize>,
     pub acc_regrets: Vec<Reward>,
     pub stable: Vec<bool>,
-    pub updates: usize,
+    pub updates: usize, // TODO: this is removed in favor of lazy recomputation
+    // TODO: add outdated flag for lazy recomputation
 }
 
 impl<A: ActionI> Policy<A> {

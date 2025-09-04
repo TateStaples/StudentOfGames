@@ -110,6 +110,3 @@ impl<A: ActionI, T: TraceI> Info<A, T> {
         }
     }
 }
-
-
-pub struct TinyInfo<A, T> { pub trace: T, pub player: Player, pub expectation: Reward, pub(crate) _phantom: PhantomData<A>}
