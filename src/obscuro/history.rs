@@ -5,13 +5,13 @@ use std::fmt::{Debug, Formatter};
 use std::rc::Rc;
 use crate::obscuro::utils::*;
 use crate::obscuro::info::*;
+use crate::obscuro::policy::Policy;
 
 // ---------- History ----------
 // #[derive(PartialEq)]
 pub enum History<G: Game> {
     Terminal { payoff: Reward },
-    New { state: Box<G::State> },
-    Visited { state: Box<G::State>, reach: HashMap<Player, Probability> },
+    Visited { state: Box<G::State>, payoff: Reward, reach: HashMap<Player, Probability> },
     Expanded { info: InfoPtr<G::Action, G::Trace>, reach: HashMap<Player, Probability>, children: Vec<(G::Action, History<G>)>, player: Player },
 }
 
@@ -19,9 +19,15 @@ impl <G: Game> Debug for History<G> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self { 
             History::Terminal { payoff } => write!(f, "Terminal({:?})", payoff),
-            History::New { state } => write!(f, "New()"),
-            History::Visited { state, reach } => write!(f, "Visited({:?})", reach),
-            History::Expanded { info, reach, children, player } => write!(f, "Expanded({:?}, {:?}, {:?}, {:?})", info, reach, children, player),
+            History::Visited { state, reach, .. } => write!(f, "Visited({:?})", G::decode(&*state.clone()).trace(Player::P1)),
+            History::Expanded { info, reach, children, player } => { 
+                // trace, actions, distribution
+                let info = &info.borrow();
+                let trace = info.trace.clone();
+                let policy = info.policy.clone();
+                
+                write!(f, "Expanded({:?}, {:?}, {:?}, {:.1?})", trace, player, policy, reach)
+            },
         }
     }
 }
@@ -30,8 +36,7 @@ impl<G: Game> Clone for History<G> {
     fn clone(&self) -> Self {
         match self {
             History::Terminal { payoff } => History::Terminal { payoff: *payoff },
-            History::New { state } => History::New { state: state.clone() },
-            History::Visited { state, reach } => History::Visited { state: state.clone(), reach: reach.clone() },
+            History::Visited { state, payoff, reach } => History::Visited { state: state.clone(), payoff: *payoff, reach: reach.clone() },
             History::Expanded { info, reach, children, player } => History::Expanded {
                 info: info.clone(),
                 reach: reach.clone(),
@@ -43,12 +48,36 @@ impl<G: Game> Clone for History<G> {
 }
 
 impl<G: Game> History<G> {
-    pub fn new(state: G::State) -> Self { History::New { state: Box::new(state) } }
+    pub fn new(game: G, reach: HashMap<Player, Probability>) -> Self {
+        let payoff = game.evaluate();
+        if game.is_over() {
+            return History::Terminal { payoff };
+        }
+        let state = Box::new(game.encode());
+        History::Visited { state, payoff, reach } 
+    }
+    
+    pub fn print(&self) {
+        println!("{:?}", self);
+    }
+    
+    pub fn print_family(&self) {
+        self.print_family_rec(0, 5);
+    }
+    fn print_family_rec(&self, tab_level: usize, depth: usize) {
+        print!("{}", "\t".repeat(tab_level));
+        self.print();
+        if depth == 0 { return; }
+        if let History::Expanded { children, .. } = self {
+            for (_, h) in children.iter() {
+                h.print_family_rec(tab_level + 1, depth - 1);
+            }
+        }
+    }
 
     pub fn payoff(&self) -> Reward {
         match self {
-            History::Terminal { payoff } => *payoff,
-            History::New { state } | History::Visited { state, .. } => G::decode(state).evaluate(),
+            History::Terminal { payoff } | History::Visited { payoff, .. } => *payoff,
             History::Expanded { info, .. } => info.borrow().policy.expectation(),
         }
     }
@@ -56,7 +85,7 @@ impl<G: Game> History<G> {
     pub fn player(&self) -> Player {
         match self {
             History::Terminal { .. } => panic!("terminal has no player"),
-            History::New { state } | History::Visited { state, .. } => G::decode(state).active_player(),
+            History::Visited { state, .. } => G::decode(state).active_player(),
             History::Expanded { info, .. } => info.borrow().player,
         }
     }
@@ -64,7 +93,7 @@ impl<G: Game> History<G> {
     pub fn trace(&self) -> G::Trace {
         match self {
             History::Terminal { .. } => unimplemented!(),
-            History::New { state } | History::Visited { state, .. } => {
+            History::Visited { state, .. } => {
                 let g = G::decode(state);
                 g.trace(g.active_player())
             }
@@ -73,51 +102,59 @@ impl<G: Game> History<G> {
     }
 
     pub fn expand(&mut self, infosets: &mut HashMap<G::Trace, InfoPtr<G::Action, G::Trace>>) {
-        if let History::Visited { state, .. } = self {
+        println!("Expanding: {:?}", self);
+        let me = self.player();
+        if let History::Visited { state, reach, .. } = self {
             let game = G::decode(state);
             let player = game.active_player();
             let actions = game.available_actions();
 
             let mut kids: Vec<(G::Action, History<G>)> = Vec::with_capacity(actions.len());
-            let mut succ_traces: Vec<Option<G::Trace>> = Vec::with_capacity(actions.len());
-            let mut succ_ptrs: Vec<Option<InfoPtr<G::Action, G::Trace>>> = Vec::with_capacity(actions.len());
-            let mut succ_alt: Vec<Option<Reward>> = Vec::with_capacity(actions.len());
 
             for a in actions.iter() {
                 let next = game.play(a);
-                let child_trace = next.trace(next.active_player());
-                let alt = next.evaluate();
-                succ_traces.push(Some(child_trace.clone()));
-                succ_ptrs.push(infosets.get(&child_trace).cloned());
-                succ_alt.push(Some(alt));
-                kids.push((a.clone(), History::new(next.encode())));
+                // let child_trace = next.trace(next.active_player());
+                // let alt = next.evaluate();
+                let mut next_reach = reach.clone(); 
+                next_reach.entry(me).and_modify(|e| *e *= 1.0/actions.len() as Probability).or_insert(1.0/actions.len() as Probability);
+                let child = History::new(next, next_reach);
+                kids.push((a.clone(), child));
             }
+            // debug_assert!(kids.iter().all(|(_, h)| {
+            //     (h.net_reach_prob()).sum() - self.net_reach_prob()) < 1e-6
+            // }));
 
             // Create/get this infoset
             let this_trace = game.trace(player);
             let rc: InfoPtr<G::Action, G::Trace> = if let Some(rc) = infosets.get(&this_trace) {
                 rc.clone()
             } else {
-                let info = todo!();//Info::new(actions.clone(), this_trace.clone(), player);
+                let info = Info::from_policy(
+                    Policy::from_rewards(kids.iter().map(|(a, h)| {
+                        (a.clone(), h.payoff())
+                    }).collect(), player), this_trace.clone(), player);
                 let rc = Rc::new(RefCell::new(info));
                 infosets.insert(this_trace.clone(), rc.clone());
                 rc
             };
 
-            // save successors
-            {
-                let mut info = rc.borrow_mut();
-                info.succ_traces = succ_traces;
-                info.succ_ptrs = succ_ptrs;
-                info.succ_alt = succ_alt;
-            }
-
             *self = History::Expanded { info: rc, reach: HashMap::new(), children: kids, player };
+        } else {
+            panic!("Can only expand a visited state");
         }
     }
     
     pub fn reach_prob(&self, player: Player) -> Probability {
-        todo!()
+        match self {
+            History::Terminal { .. } => unimplemented!("You should not be here"),
+            History::Visited { reach, .. } | History::Expanded { reach, ..} => *reach.get(&player).unwrap_or(&1.0)
+        }
+    }
+    pub fn net_reach_prob(&self) -> Probability {
+        match self { 
+            History::Terminal { .. } => unimplemented!("You should not be here"),
+            History::Visited { reach, .. } | History::Expanded { reach, ..} => reach.values().product(),
+        }
     }
     
     pub fn compare(&self, trace: G::Trace) -> Option<Ordering> {

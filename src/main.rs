@@ -8,5 +8,5 @@ pub mod obscuro {
 }
 
 fn main() {
-    // obscuro::demo::main_obscoro();
+    obscuro::demo::main_obscoro();
 }

@@ -1,8 +1,8 @@
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 use std::hash::Hash;
 
 // ---------- Tune-ables ----------
-pub const SOLVE_TIME_SECS: u64 = 1;
+pub const SOLVE_TIME_SECS: u64 = 3;
 pub const MIN_INFO_SIZE: usize = 64;
 pub const MAX_SUPPORT: usize = 3;
 
