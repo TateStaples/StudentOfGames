@@ -20,12 +20,12 @@ impl <G: Game> Debug for History<G> {
         match self { 
             History::Terminal { payoff } => write!(f, "Terminal({:?})", payoff),
             History::Visited { state, reach, .. } => write!(f, "Visited({:?})", G::decode(&*state.clone()).trace(Player::P1)),
-            History::Expanded { info, reach, children, player } => { 
+            History::Expanded { info, reach, children, player } => {
                 // trace, actions, distribution
                 let info = &info.borrow();
                 let trace = info.trace.clone();
                 let policy = info.policy.clone();
-                
+
                 write!(f, "Expanded({:?}, {:?}, {:?}, {:.1?})", trace, player, policy, reach)
             },
         }
@@ -54,18 +54,25 @@ impl<G: Game> History<G> {
             return History::Terminal { payoff };
         }
         let state = Box::new(game.encode());
-        History::Visited { state, payoff, reach } 
+        History::Visited { state, payoff, reach }
     }
-    
+
     pub fn print(&self) {
         println!("{:?}", self);
     }
-    
+
     pub fn print_family(&self) {
         self.print_family_rec(0, 5);
     }
+    
+    pub fn size(&self) -> usize {
+        match self {
+            History::Terminal { .. } | History::Visited { .. } => 1,
+            History::Expanded { children, .. } => 1 + children.iter().map(|(_, h)| h.size()).sum::<usize>(),
+        }
+    }
     fn print_family_rec(&self, tab_level: usize, depth: usize) {
-        print!("{}", "\t".repeat(tab_level));
+        print!("{}", "  ".repeat(tab_level));
         self.print();
         if depth == 0 { return; }
         if let History::Expanded { children, .. } = self {
@@ -78,7 +85,7 @@ impl<G: Game> History<G> {
     pub fn payoff(&self) -> Reward {
         match self {
             History::Terminal { payoff } | History::Visited { payoff, .. } => *payoff,
-            History::Expanded { info, .. } => info.borrow().policy.expectation(),
+            History::Expanded { info, .. } => info.borrow_mut().policy.expectation(),
         }
     }
 
@@ -115,7 +122,7 @@ impl<G: Game> History<G> {
                 let next = game.play(a);
                 // let child_trace = next.trace(next.active_player());
                 // let alt = next.evaluate();
-                let mut next_reach = reach.clone(); 
+                let mut next_reach = reach.clone();
                 next_reach.entry(me).and_modify(|e| *e *= 1.0/actions.len() as Probability).or_insert(1.0/actions.len() as Probability);
                 let child = History::new(next, next_reach);
                 kids.push((a.clone(), child));
@@ -151,7 +158,7 @@ impl<G: Game> History<G> {
         }
     }
     pub fn net_reach_prob(&self) -> Probability {
-        match self { 
+        match self {
             History::Terminal { .. } => unimplemented!("You should not be here"),
             History::Visited { reach, .. } | History::Expanded { reach, ..} => reach.values().product(),
         }

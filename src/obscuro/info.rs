@@ -22,7 +22,6 @@ pub struct Info<A: ActionI, T: TraceI> {
 
 impl<A: ActionI, T: TraceI> Info<A, T> {
     pub fn from_policy(policy: Policy<A>, trace: T, player: Player) -> Self {
-        let n = policy.actions.len();
         Info {
             policy,
             trace,
@@ -33,9 +32,9 @@ impl<A: ActionI, T: TraceI> Info<A, T> {
         }
     }
 
-    pub fn add_counterfactuals(&mut self, a: A, cfv: Reward) {
-        self.policy.set_expectation(&a, cfv);
-    }
+    // pub fn add_counterfactuals(&mut self, a: A, cfv: Reward) {
+    //     self.policy.set_expectation(&a, cfv);
+    // }
 
     /// Something to do with quantifying the uncertainty
     pub fn gift(&mut self) -> Reward {

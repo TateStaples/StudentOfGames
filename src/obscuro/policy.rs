@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::fmt::{write, Debug, Formatter};
+use std::fmt::{Debug, Formatter};
 use rand::distributions::{Distribution, WeightedIndex};
 use rand::prelude::IteratorRandom;
 use rand::thread_rng;
@@ -11,13 +11,13 @@ use crate::obscuro::utils::*;
 #[derive(Clone)]
 pub struct Policy<A: ActionI> {
     multiplier: i8, // +1 for maximizing player (or chance), -1 for minimizing (in zero-sum CFV space)
-    pub actions: Vec<A>,
-    pub expectations: Vec<Reward>,
+    actions: Vec<A>,
+    counterfactuals: Vec<Reward>,
     expansions: Vec<usize>,
-    pub acc_regrets: Vec<Reward>,
+    acc_regrets: Vec<Counterfactual>,
     stable: Vec<bool>,
-    num_updates: Reward,
-    outdated: bool,
+    first_update: Option<usize>,
+    last_set: usize
 }
 
 impl<A: ActionI> Policy<A> {
@@ -27,16 +27,17 @@ impl<A: ActionI> Policy<A> {
 
     pub fn from_rewards(items: Vec<(A, Reward)>, player: Player) -> Self {
         let (actions, expectations): (Vec<A>, Vec<Reward>) = items.into_iter().unzip();
+        debug_assert!(expectations.iter().all(|&r| r >= -5.0 && r <= 5.0));
         let n = expectations.len();
         Policy {
             multiplier: Self::player_to_multiplier(player),
             actions,
-            expectations,
+            counterfactuals: expectations,
             expansions: vec![0; n],
             acc_regrets: vec![1e-12; n],
             stable: vec![false; n],
-            outdated: false,
-            num_updates: 1.0,
+            first_update: None,
+            last_set: 0,
         }
     }
     
@@ -51,7 +52,7 @@ impl<A: ActionI> Policy<A> {
     fn quality(&self, idx: usize) -> f64 {
         // very light UCB/PUCT-style score using expansions + expectations
         let n = self.expansions.iter().sum::<usize>().max(1) as f64;
-        let v = self.expectations[idx];
+        let v = self.counterfactuals[idx];
         let c = 1.25;
         v + c * ((n.ln() / (self.expansions[idx].max(1) as f64)).sqrt())
     }
@@ -67,8 +68,7 @@ impl<A: ActionI> Policy<A> {
         out
     }
 
-    pub fn exploit_policy(&mut self) -> Vec<Probability> {
-        self.update();
+    pub fn exploit_policy(&self) -> Vec<Probability> {
         self.lazy_exploit()
     }
     fn lazy_exploit(&self) -> Vec<Probability> {
@@ -82,7 +82,7 @@ impl<A: ActionI> Policy<A> {
         self.acc_regrets.iter().map(|r| r / sum).collect()
     }
 
-    fn exploration_policy(&mut self) -> Vec<Probability> {
+    fn exploration_policy(&self) -> Vec<Probability> {
         // simple 50/50 between puct single-arm and exploit mix
         let puct = self.puct();
         let exploit = self.exploit_policy();
@@ -104,20 +104,17 @@ impl<A: ActionI> Policy<A> {
     }
 
     /// Sample your action policy for exploring more of the space
-    pub fn explore(&mut self) -> A { 
-        self.update(); 
+    pub fn explore(&self) -> A {
         let policy = self.exploration_policy();
         self.sample_from(&policy)
     }
     /// Sample your action policy to greedily get what you believe to be best
-    pub fn exploit(&mut self) -> A {
-        self.update();
+    pub fn exploit(&self) -> A {
         let policy = self.exploit_policy();
         self.sample_from(&policy)
     }
     /// Optimization from the Obscuro paper (maybe test without this option)
-    pub fn purified(&mut self) -> A {
-        self.update();
+    pub fn purified(&self) -> A {
         // choose among top-K by exploit prob with tie-breaking random among equals
         let probs = self.exploit_policy();
         let mut idxs: Vec<(usize, f64)> = probs.iter().cloned().enumerate().collect();
@@ -126,19 +123,19 @@ impl<A: ActionI> Policy<A> {
         let mut rng = thread_rng();
         self.actions[*k.iter().choose(&mut rng).unwrap()].clone()
     }
-    pub fn best_action(&mut self) -> A {
-        self.update();
+    pub fn best_action(&self) -> A {
         let idx = (0..self.actions.len())
             .max_by(|&i,&j| self.acc_regrets[i].partial_cmp(&self.acc_regrets[j]).unwrap_or(Ordering::Equal))
             .unwrap();
         self.actions[idx].clone()
     }
     /// Update the state of the policy to inform further actions
-    pub fn set_expectation(&mut self, a: &A, v: Reward) {
-        // TODO: add some check that the player isn't chance here
-        self.outdated = true;
+    pub fn add_counterfactual(&mut self, a: &A, v: Counterfactual, update: usize) {
+        // println!("Pre-CFVS: {:?}, pre-update: {}", self.counterfactuals, self.last_set);
         let idx = self.actions.iter().position(|x| x == a).unwrap();
-        self.expectations[idx] = v;
+        // TODO: add some check that the player isn't chance here
+        self.counterfactuals[idx] += v;
+        // println!("CFVS: {:?}, Last Update: {}", self.counterfactuals, self.last_set);
     }
     /// Update degree of exploration to inform further search
     pub fn add_expansion(&mut self, a: &A) {
@@ -147,57 +144,64 @@ impl<A: ActionI> Policy<A> {
     }
     /// The expected value of this (exploit) action distribution
     pub fn expectation(&self) -> Reward {
-        if self.expectations.is_empty() { return 0.0; }
-        self.expectations.iter().sum::<f64>() / (self.expectations.len() as f64)
+        if self.counterfactuals.is_empty() { return 0.0; }
+        // self.counterfactuals.iter().sum::<Reward>() / self.counterfactuals.len() as Reward
+        let policy = self.lazy_exploit();
+        self.counterfactuals.iter().zip(policy.iter()).map(|(e,p)| e * p).sum()
     }
     /// Get the probability you would choose a given action
-    pub fn p_exploit(&mut self, a: &A) -> Probability {
-        self.update();
+    pub fn p_exploit(&self, a: &A) -> Probability {
         let idx = self.actions.iter().position(|x| x == a).unwrap();
         let sum: f64 = self.acc_regrets.iter().sum();
         if sum <= 0.0 { return 0.0; }
         self.acc_regrets[idx] / sum
     }
     /// Use all the recent actions to calculate new action distribution
-    fn update(&mut self) {
-        if !self.outdated { return; }
+    pub fn update(&mut self, total_updates: usize) {
+        if total_updates == self.last_set {
+            return;
+        }
+        self.last_set = total_updates;
+        if self.first_update.is_none() { self.first_update = Some(self.last_set-1); }
+        let num_updates = (total_updates - self.first_update.unwrap()).max(500) as Reward;
         // last-iterate CFR+-ish push of positive advantages vs a simple baseline
-        let momentum_coeff = self.num_updates/(self.num_updates+1.0);
-        let n = self.expectations.len() as Reward;
+        let momentum_coeff =  num_updates/(num_updates+10.0);
+        let n = self.counterfactuals.len() as Reward;
         if n <= 0.0 { return; }
-        let baseline = self.expectations.iter().sum::<Reward>() / n;
+        let baseline = self.expectation();
         let mult = self.multiplier as Reward;
-        let eps = 1e-12;
-        // inst_regret = {a: self.expectations[a]*self.multiplier-ev for a in self.expectations}
-        // self.acc_regret = {a: max(0.0, momentum_coeff * self.acc_regret[a] + inst_regret[a]) for a in self.acc_regret}
-        // self.net_regret = sum(self.acc_regret.values())
+        let eps = 0.0;
 
-        for i in 0..self.expectations.len() {
-            let inst_regret = self.expectations[i] * (mult - baseline);
+        // println!("Updating policy with {} updates", num_updates);
+        for (i, cfvs) in self.counterfactuals.iter().enumerate() {
+            let inst_regret = mult * (cfvs - baseline);
+            // println!("mult: {}, inst_regret: {}, baseline: {}, cfvs: {}, action: {:?}, r: {}", mult, inst_regret, baseline, cfvs, self.actions[i], self.acc_regrets[i]);
             self.acc_regrets[i] = (momentum_coeff * self.acc_regrets[i] + inst_regret).max(eps);
         }
+        // debug_assert!(self.acc_regrets.iter().all(|&r| r > 0.0));
 
         // mark current best as stable (cheap purification hint)
         let best = (0..self.acc_regrets.len())
             .max_by(|&i,&j| self.acc_regrets[i].partial_cmp(&self.acc_regrets[j]).unwrap_or(Ordering::Equal));
         if let Some(i) = best { self.stable[i] = true; }
-        self.outdated = false;
+        self.counterfactuals = vec![0.0; self.counterfactuals.len()];
     }
 }
 
 impl<A: ActionI> Debug for Policy<A> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let ev = self.expectation();
         let distribution = &self.lazy_exploit();
         let actions = &self.actions;
-        let expectations = &self.expectations;
+        let expectations = &self.counterfactuals;
         let regrets = &self.acc_regrets;
-        write!(f, "Policy({})",
+        write!(f, "Policy({}, {:.3}, {})", self.multiplier, ev,
                actions.iter()
                    .zip(distribution.iter())
                    .zip(regrets.iter())
                    .zip(expectations.iter())
-                   .map(|(((action, prob), expectation), regret)| {
-                       format!("[{:?}: p={:.3}, e={:.2}, r={:.2}]", action, prob, expectation, regret)
+                   .map(|(((action, prob), regret), expectation)| {
+                       format!("[{:?}: p={:.3}, e={:.2}, r={:.3}]", action, prob, expectation, regret)
                    })
                    .collect::<Vec<_>>()
                    .join(", ")

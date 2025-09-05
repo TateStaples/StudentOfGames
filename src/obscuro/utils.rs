@@ -2,12 +2,13 @@ use std::fmt::{Debug, Display};
 use std::hash::Hash;
 
 // ---------- Tune-ables ----------
-pub const SOLVE_TIME_SECS: u64 = 3;
+pub const SOLVE_TIME_SECS: u64 = 5;
 pub const MIN_INFO_SIZE: usize = 64;
 pub const MAX_SUPPORT: usize = 3;
 
 // ---------- Basic types ----------
 pub type Reward = f64;
+pub type Counterfactual = Reward;  // Syntactically different but Semantically same as Reward
 pub type Probability = f64;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
@@ -29,14 +30,13 @@ impl Player {
 pub trait ActionI: Clone + Eq + Hash + Debug {}
 impl<T: Clone + Eq + Hash + Debug> ActionI for T {}
 
-pub trait TraceI: Clone + Eq + Hash + Debug + Default + PartialOrd {
+pub trait TraceI: Clone + Eq + Hash + Debug + Default {
     fn player(&self) -> Player;
 }
 
 pub trait Game: Sized + Clone {
     type State: Clone;
     type Action: ActionI;
-    type Observation: Clone;
     type Trace: TraceI;
 
     // Encode/decode world state
@@ -51,7 +51,6 @@ pub trait Game: Sized + Clone {
     // Local dynamics
     fn active_player(&self) -> Player;
     fn available_actions(&self) -> Vec<Self::Action>;
-    fn observation(&self, player: Player) -> Self::Observation;
     fn play(&self, action: &Self::Action) -> Self;
     fn is_over(&self) -> bool;
     fn evaluate(&self) -> Reward; // a quick static eval
