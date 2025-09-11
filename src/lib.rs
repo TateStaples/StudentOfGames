@@ -1,47 +1,21 @@
 // #![feature(inherent_associated_types)]
 #![feature(hash_extract_if)]
 #![feature(trait_alias)]
+#![feature(iterator_try_collect)]
+#![allow(unused)]
+#![allow(non_snake_case)]
 
-// 
-// mod alpha_zero;
-pub mod helpers{
-    // pub mod config;
-    // mod data;
-    // mod evaluator;
-    // pub mod prelude;
-    // pub mod utils;
+
+pub mod games {
+    pub mod tictactoe;
+    pub mod rps;
 }
+pub mod info;
+pub mod policy;
+pub mod utils;
+pub mod history;
+pub mod obscuro;
 
-mod examples {
-//     pub(crate) mod chess {}
-//     pub(crate) mod connect4 {
-//         mod connect4;
-//         mod main;
-        // mod policies;
-    // }
-    // pub(crate) mod go {}
-    // pub(crate) mod poker {}
-    // pub(crate) mod rps {}
-    // pub(crate) mod tictactoe {
-    //     pub(crate) mod tictactoe;
-    // }
+fn main() {
+    
 }
-
-// pub mod game;
-// // mod mcts;
-// pub mod policies;
-// mod gt_cfr;
-// mod game_tree;
-// mod search_statistics;
-// mod student_of_games;
-// mod cfr;
-// mod minimax;
-// mod types;
-// mod fresh;
-// mod obscuro;
-// mod chat;
-
-// mod main;
-//
-// mod chat;
-// mod alpha_zero;

@@ -1,12 +1,12 @@
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
 
-// ---------- Tune-ables ----------
-pub const SOLVE_TIME_SECS: u64 = 5;
+// ---------- Tune-ables ---------- // 
+pub const SOLVE_TIME_SECS: u64 = 1;
 pub const MIN_INFO_SIZE: usize = 64;
 pub const MAX_SUPPORT: usize = 3;
 
-// ---------- Basic types ----------
+// ---------- Basic types ---------- //
 pub type Reward = f64;
 pub type Counterfactual = Reward;  // Syntactically different but Semantically same as Reward
 pub type Probability = f64;

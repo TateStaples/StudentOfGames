@@ -1,16 +1,25 @@
-use crate::obscuro::history::*;
-use crate::obscuro::info::*;
-use crate::obscuro::obscuro::ResolveActions::{ENTER, SKIP};
-use crate::obscuro::policy::Policy;
-use crate::obscuro::utils::*;
+
 use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::Entry;
-use std::fmt::format;
+use std::env::consts::OS;
+use std::path::Path;
 use std::time::{Duration, SystemTime};
-use rand::distributions::{Distribution, WeightedIndex};
-use rand::thread_rng;
-
+use pgfplots::axis::Axis;
+use rand::distr::weighted::WeightedIndex;
+use rand::prelude::Distribution;
+use rand::{rng};
+use super::history::*;
+use crate::info::*;
+use crate::policy::Policy;
+use crate::utils::*;
 // ---------- Resolve gadget ----------
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+pub enum ResolveActions {
+    SKIP,
+    ENTER,
+}
+const SKIP: ResolveActions = ResolveActions::SKIP;
+const ENTER: ResolveActions = ResolveActions::ENTER;
 struct SubgameRoot<G: Game> {
     policy: Policy<usize>,
     children: Vec<ResolverGadget<G>>,
@@ -56,7 +65,7 @@ impl<G: Game> SubgameRoot<G> {
         }
     }
 }
-/// Safe-Resolving Gadget to determine whether opponent would enter this subgame. TODO: figure out default
+/// Safe-Resolving Gadget to determine whether the opponent would enter this subgame.
 struct ResolverGadget<G: Game> {
     info: Info<usize, G::Trace>, // Info policy showing the probability distribution of reach odds for each child in this opp.
     resolver: Policy<ResolveActions>,
@@ -66,17 +75,12 @@ struct ResolverGadget<G: Game> {
 }
 type PreResolver<G> = (Probability, Reward, Vec<History<G>>);
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-pub enum ResolveActions {
-    SKIP,
-    ENTER,
-}
 // ---------- Solver ----------
 pub struct Obscuro<G: Game> {
     pub expectation: Reward,
     total_updates: usize,
     info_sets: HashMap<G::Trace, InfoPtr<G::Action, G::Trace>>,
-    subgame_root: SubgameRoot<G>, // TODO: think more about how to structure this at the start of the game
+    subgame_root: SubgameRoot<G>, 
     start_time: SystemTime,
     active_player: Player,
 }
@@ -105,7 +109,7 @@ impl<G: Game> Default for Obscuro<G> {
         };
         Self {
             expectation: 0.0,
-            total_updates: 0,
+            total_updates: 10,
             info_sets: HashMap::new(),
             subgame_root: root,
             start_time: SystemTime::now(),
@@ -142,13 +146,12 @@ impl<G: Game> Obscuro<G> {
     }
 
     /// Update "now" in the solver
-    /// TODO: figure out the initial construction
     pub fn construct_subgame(&mut self, hist: G::Trace, player: Player) {
         // How does ord work for multiple players?
         type PreResolver<G> = (Probability, Reward, Vec<History<G>>);
         let other = player.other();
         // Find all root histories
-        // Filter down to the second cover of the trace -> split by opponent infostate (they are kinda doing it by post action infostate)
+        // Filter down to the second cover of the trace -> split by opponent infostate (they are kinda doing it by post-action infostate)
         let root_histories = self
             .drain_root()
             .into_iter()
@@ -237,13 +240,9 @@ impl<G: Game> Obscuro<G> {
         // println!("Expansion step");
         let Self {subgame_root, info_sets, ..} = self;
         let hist1 = Self::sample_history(subgame_root);
-        // println!("Source1:");
-        // hist1.print_family();
         Obscuro::expansion_step_inner(Player::P1, hist1, info_sets);
         let Self {subgame_root, info_sets, ..} = self;
         let hist2 = Self::sample_history(subgame_root);
-        // println!("Source2:");
-        // hist2.print_family();
         Obscuro::expansion_step_inner(Player::P2, hist2, info_sets);
     }
     // Adjust names/tuple shapes to your actual types.
@@ -266,7 +265,7 @@ impl<G: Game> Obscuro<G> {
 
         // 2) Sample an index from the weights.
         let dist = WeightedIndex::new(&probs).expect("no options / invalid weights");
-        let k = dist.sample(&mut thread_rng());
+        let k = dist.sample(&mut rng());
         let (i, j) = coords[k];
 
         // 3) Reborrow mutably and return the selected history.
@@ -294,9 +293,8 @@ impl<G: Game> Obscuro<G> {
     }
     
     fn solve_step(&mut self) {
-        // println!("Solve step");
         self.cfr_iterations(Player::P1);
-        // self.cfr_iterations(Player::P2);
+        self.cfr_iterations(Player::P2);
 
         let p_max: Probability = self.get_pmax();
         let maxmargin = &mut self.subgame_root.policy;
@@ -307,7 +305,7 @@ impl<G: Game> Obscuro<G> {
             let prior_probability = child.prior_probability;
             let p_resolve = resolver.p_exploit(&ENTER);
             let reach_prob = p_max * (prior_probability) * p_resolve + (1.0-p_max) * p_maxmargin;
-            // maxmargin.add_counterfactual(&idx, reach_prob, self.total_updates);  // TODO: add this back
+            // maxmargin.add_counterfactual(&idx, reach_prob, 1.0);
         }
 
     }
@@ -315,14 +313,14 @@ impl<G: Game> Obscuro<G> {
     fn cfr_iterations(&mut self, optimizing_player: Player) {
         self.total_updates += 1;
         let SubgameRoot { policy: ref mut root_policy, ref mut children } = &mut self.subgame_root;
-        // let mut root_value = 0.0;
-        let resolver_dist = root_policy.exploit_policy();
+        let mut root_value = 0.0;
+        let resolver_dist = root_policy.inst_policy();
         for (resolver_idx, (resolver_gadget, r_prob)) in children.iter_mut().zip(resolver_dist).enumerate() {
-            let ResolverGadget { resolver, alt, children: histories, info, .. } = resolver_gadget;
+            let ResolverGadget { resolver, alt, children: histories, info, prior_probability } = resolver_gadget;
             let _p_enter = resolver.p_exploit(&ENTER);
             let p_enter = 1.0;
             let mut enter_value = 0.0;
-            let distribution = info.policy.exploit_policy();
+            let distribution = info.policy.inst_policy();
             for (h_idx, (history, sample_chance)) in histories.iter_mut().zip(distribution.iter()).enumerate() {
                 // println!("h_idx: {}, sample_chance: {}", h_idx, sample_chance);
                 // println!("Enter Chance: {} (alt={})", p_enter, alt);
@@ -330,29 +328,27 @@ impl<G: Game> Obscuro<G> {
                         (Player::Random, *sample_chance),
                         (optimizing_player.other(), r_prob * p_enter),
                     ]);
-                let h_value = Self::make_utilities(history, optimizing_player, action_reach, self.total_updates);
+                let h_value = Self::make_utilities(history, optimizing_player, action_reach);
                 Self::apply_updates(history, self.total_updates);
-                // info.policy.add_counterfactual(&h_idx, h_value * sample_chance, self.total_updates);
                 enter_value += sample_chance * h_value;
             }
-            // resolver.add_counterfactual(&ENTER, enter_value, self.total_updates);
-            // resolver.add_counterfactual(&SKIP, *alt * (1.0-p_enter), self.total_updates);
-            let resolver_value = (1.0
-                - p_enter) * *alt + p_enter * enter_value;
-            // root_policy.add_counterfactual(&resolver_idx, resolver_value, self.total_updates);
-            // root_value += resolver_value * *prior_probability;
+            // resolver.add_counterfactual(&ENTER, enter_value, r_prob);
+            // resolver.add_counterfactual(&SKIP, *alt, r_prob);
+            // resolver.update(self.total_updates);
+            let resolver_value = (1.0 - p_enter) * *alt + p_enter * enter_value;
+            // root_policy.add_counterfactual(&resolver_idx, resolver_value, 1.0);
+            root_value += resolver_value * *prior_probability;
         }
+        // root_policy.update(self.total_updates);
     }
 
     fn make_utilities(
         h: &mut History<G>,
         optimizing_player: Player,
         reach_prob: HashMap<Player, Probability>,
-        total_updates: usize,
     ) -> Reward {
         match h {
             History::Terminal { payoff } => *payoff,
-
             History::Visited { reach, payoff, .. } => {
                 *reach = reach_prob.clone();
                 *payoff
@@ -367,19 +363,19 @@ impl<G: Game> Obscuro<G> {
                 let net_reach_prob: Probability = reach_prob.get(&Player::Random).unwrap_or(&1.0) * reach_prob.get(&player.other()).unwrap_or(&1.0);
                 *reach = reach_prob.clone();
                 let mut local = 0.0;
+                let trace = &info.borrow().trace.clone();
                 let policy = &mut info.borrow_mut().policy;
-                let distribution = policy.exploit_policy();
+                let distribution = policy.inst_policy();
                 for ((a, child), action_chance) in children.iter_mut().zip(distribution.iter()) {
                     let mut new_reach_prob = reach_prob.clone();
                     new_reach_prob.entry(*player).and_modify(|x| *x *= action_chance).or_insert(*action_chance);
                     // println!("{:?} ({:?}) -> {:?}", a, action_chance, new_reach_prob);
-                    if *player == optimizing_player || action_chance > &0.0 || true {
-                        let v = Self::make_utilities(child, optimizing_player, new_reach_prob, total_updates);
+                    if true {  // || *player == optimizing_player || action_chance > &0.0 {
+                        let v = Self::make_utilities(child, optimizing_player, new_reach_prob);
                         local += action_chance * v;
-                        let cfvs = v * net_reach_prob;
-                        // println!("Adding Counterfactual {:?}: v={}, cfvs={}, update={}, rp={}, ac={},action={:?}", player, v, cfvs, total_updates, net_reach_prob, action_chance, a.clone());
-                        policy.add_counterfactual(a, cfvs, total_updates);
-                        // info.borrow_mut().add_counterfactuals(a.clone(), v);
+                        // println!("Adding Counterfactual {:?}: v={:.2}, cfvs={:.2}, update={}, rp={}, ac={:.2},action={:?}, trace={:?}", player, v, cfvs, total_updates, net_reach_prob, action_chance, a.clone(), trace);
+                        policy.add_counterfactual(a, v, net_reach_prob);
+                        // info.borrow_mut().policy.add_counterfactual(&a, v, net_reach_prob);
                     }
                 }
                 local
@@ -392,10 +388,10 @@ impl<G: Game> Obscuro<G> {
             History::Terminal {..} => (),
             History::Visited {..} => (),
             History::Expanded {children, info, .. } => {
-                info.borrow_mut().policy.update(total_updates);
                 for (_, child) in children.iter_mut() {
                     Self::apply_updates(child, total_updates);
                 }
+                info.borrow_mut().policy.update(total_updates);
             }
         }
     }
@@ -412,42 +408,48 @@ impl<G: Game> Obscuro<G> {
         self.active_player = player;
 
         self.construct_subgame(observation.clone(), player);
-
-        // for _ in 0..33 {
-        //     self.expansion_step();
-        // }
-        // very lightweight loop: expand each J0 member once, then evaluate gadgets
-        while self.start_time.elapsed().unwrap_or(Duration::from_secs(0)) < Duration::from_secs(SOLVE_TIME_SECS) {
-            // Evaluate utilities from root
-            for _ in 0..100 {
-                // for (k, v) in self.info_sets.iter() {
-                //     let info = v.borrow();
-                //     println!("{:?} ({:?}) -> {:?}", k, info.player, info.policy);
-                // }
-                self.expansion_step();
-                self.solve_step();
-            }
+        
+        {
+            let Self {subgame_root, info_sets, ..} = self;
+            subgame_root.children[0].children[0].full_expand(info_sets);
         }
-        // println!("SIZE: {}", self.size());
-        self.subgame_root.children[0].children[0].print();
-        // for (k, v) in self.info_sets.iter() {
-        //     let info = v.borrow();
-        //     println!("{:?} ({:?}) -> {:?}", k, info.player, info.policy);
-        // }
-
-        // return purified best from chosen expanded node; if missing, fall back to random on any infoset for player
+        // let mut p1 = vec![];
+        // let mut p2 = vec![];
+        let mut timer = 100_000;
+        while self.start_time.elapsed().unwrap_or(Duration::from_secs(0)) < Duration::from_secs(SOLVE_TIME_SECS) {
+            // self.expansion_step();
+            self.solve_step();
+            if timer == 0 {
+                timer = 100_000;
+                self.debug();
+            } else { timer -= 1 }
+        }
+        self.debug();
+        // return purified best from the chosen expanded node; if missing, fall back to random on any infoset for player
         if let Some(a) = self.choose_action_from_root() {
             return a;
-        }
-
-        // Fallback: pick an action from any infoset for the player
-        for (_t, rc) in self.info_sets.iter_mut() {
-            let mut info = rc.borrow_mut();
-            if info.player == player {
-                return info.policy.purified();
+        } else {
+            println!("Fallback:");
+            // Fallback: pick an action from any infoset for the player
+            for (_t, rc) in self.info_sets.iter_mut() {
+                let mut info = rc.borrow_mut();
+                if info.player == player {
+                    return info.policy.purified();
+                }
             }
+            panic!("No action available");
         }
+    }
 
-        panic!("No action available");
+    fn debug(&mut self, 
+             // p1: Vec<(Probability, Probability, Probability)>, 
+             // p2: Vec<(Probability, Probability, Probability)>
+    ) {
+        // println!("SIZE: {}, steps: {}", self.size(), self.total_updates);
+        // self.subgame_root.children[0].children[0].print_family();
+        Self::make_utilities(&mut self.subgame_root.children[0].children[0], Player::P1, HashMap::new());
+        for (trace, info) in self.info_sets.iter_mut() {
+            println!("{:?} -> {:?}", trace, info.borrow().policy);
+        }
     }
 }

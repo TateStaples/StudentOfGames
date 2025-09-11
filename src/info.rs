@@ -1,9 +1,9 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
-use crate::obscuro::utils::*;
-use crate::obscuro::policy::*;
-use crate::obscuro::history::*;
+use crate::utils::*;
+use crate::policy::*;
+use crate::history::*;
 
 // ---------- Info (an infoset) ----------
 pub type InfoPtr<A, T> = Rc<RefCell<Info<A, T>>>;
@@ -17,7 +17,7 @@ pub struct Info<A: ActionI, T: TraceI> {
     pub reach: HashMap<Player, Probability>,
     pub visited: bool,
     
-    pub(crate) gift_cached: Option<Reward>,
+    pub gift_cached: Option<Reward>,
 }
 
 impl<A: ActionI, T: TraceI> Info<A, T> {
@@ -45,7 +45,7 @@ impl<A: ActionI, T: TraceI> Info<A, T> {
         v
     }
 
-    fn gift_inner(&self, seen: &mut HashSet<T>) -> Reward {
+    fn gift_inner(&self, _: &mut HashSet<T>) -> Reward {
         0.0
     }
 

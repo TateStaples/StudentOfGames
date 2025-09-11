@@ -1,11 +1,10 @@
 use std::cell::RefCell;
-use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::rc::Rc;
-use crate::obscuro::utils::*;
-use crate::obscuro::info::*;
-use crate::obscuro::policy::Policy;
+use crate::utils::*;
+use crate::info::*;
+use crate::policy::Policy;
 
 // ---------- History ----------
 // #[derive(PartialEq)]
@@ -19,8 +18,8 @@ impl <G: Game> Debug for History<G> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self { 
             History::Terminal { payoff } => write!(f, "Terminal({:?})", payoff),
-            History::Visited { state, reach, .. } => write!(f, "Visited({:?})", G::decode(&*state.clone()).trace(Player::P1)),
-            History::Expanded { info, reach, children, player } => {
+            History::Visited { state, .. } => write!(f, "Visited({:?})", G::decode(&*state.clone()).trace(Player::P1)),
+            History::Expanded { info, reach, player, .. } => {
                 // trace, actions, distribution
                 let info = &info.borrow();
                 let trace = info.trace.clone();
@@ -72,11 +71,12 @@ impl<G: Game> History<G> {
         }
     }
     fn print_family_rec(&self, tab_level: usize, depth: usize) {
-        print!("{}", "  ".repeat(tab_level));
+        print!("{}", "    ".repeat(tab_level));
         self.print();
         if depth == 0 { return; }
         if let History::Expanded { children, .. } = self {
-            for (_, h) in children.iter() {
+            for (a, h) in children.iter() {
+                print!("{:?} -> ", a);
                 h.print_family_rec(tab_level + 1, depth - 1);
             }
         }
@@ -109,7 +109,7 @@ impl<G: Game> History<G> {
     }
 
     pub fn expand(&mut self, infosets: &mut HashMap<G::Trace, InfoPtr<G::Action, G::Trace>>) {
-        println!("Expanding: {:?}", self);
+        // println!("Expanding: {:?}", self);
         let me = self.player();
         if let History::Visited { state, reach, .. } = self {
             let game = G::decode(state);
@@ -151,6 +151,17 @@ impl<G: Game> History<G> {
         }
     }
     
+    pub fn full_expand(&mut self, infosets: &mut HashMap<G::Trace, InfoPtr<G::Action, G::Trace>>) {
+        if let History::Visited { .. } = self {
+            self.expand(infosets);
+        }
+        if let History::Expanded { children, .. } = self {
+            for (_, h) in children.iter_mut() {
+                h.full_expand(infosets);
+            }
+        }
+    }
+    
     pub fn reach_prob(&self, player: Player) -> Probability {
         match self {
             History::Terminal { .. } => unimplemented!("You should not be here"),
@@ -162,9 +173,5 @@ impl<G: Game> History<G> {
             History::Terminal { .. } => unimplemented!("You should not be here"),
             History::Visited { reach, .. } | History::Expanded { reach, ..} => reach.values().product(),
         }
-    }
-    
-    pub fn compare(&self, trace: G::Trace) -> Option<Ordering> {
-        None
     }
 }
