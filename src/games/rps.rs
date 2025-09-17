@@ -18,8 +18,6 @@ impl std::fmt::Debug for RpsAction {
 #[derive(Clone, Eq, PartialEq, Hash, Default, Debug)]
 pub struct RpsTrace(pub u8);
 
-
-
 impl PartialOrd for RpsTrace {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         self.0.partial_cmp(&other.0)
@@ -28,11 +26,12 @@ impl PartialOrd for RpsTrace {
 
 // 0 = start, 1 = after P1 move, 2 = terminal
 impl TraceI for RpsTrace {
-    fn player(&self) -> Player {
-        if self.0%2==0 { Player::P1 } else { Player::P2 }
-    }
+    // fn player(&self) -> Player {
+    //     if self.0%2==0 { Player::P1 } else { Player::P2 }
+    // }
 }
-#[derive(Clone)]
+#[derive(Clone, Debug)]
+#[derive(Hash)]
 pub struct Rps {
     p1: Option<RpsAction>,
     p2: Option<RpsAction>,
@@ -58,8 +57,6 @@ impl Game for Rps {
         };
         RpsTrace(stage)
     }
-    fn perspective(&self, _trace: Self::Trace) -> Player { self.to_move }
-
     fn active_player(&self) -> Player { self.to_move }
 
     fn available_actions(&self) -> Vec<Self::Action> {

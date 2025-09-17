@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use crate::utils::*;
 
 // ---------- Demo Game: Rock-Paper-Scissors (sequential, perfect info) ----------
@@ -7,10 +8,28 @@ use crate::utils::*;
 struct TicTacToe {
     board: Vec<Vec<Option<Player>>>
 }
-impl TraceI for TicTacToe {
-    fn player(&self) -> Player {
-        let filled_squares = self.board.iter().flatten().filter(|x| x.is_some()).count();
-        if filled_squares%2==0 { Player::P1 } else { Player::P2 }
+impl TraceI for TicTacToe {}
+impl PartialOrd for TicTacToe {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        debug_assert!(self.board.len() == other.board.len() && self.board[0].len() == other.board[0].len());
+        let mut self_subset_other = true;
+        let mut other_subset_self = true;
+        for (row_self, row_other) in self.board.iter().zip(other.board.iter()) {
+            for (cell_self, cell_other) in row_self.iter().zip(row_other.iter()) {
+                match (cell_self, cell_other) {
+                    (Some(p1), Some(p2)) if p1 != p2 => {return None}
+                    (Some(_), None) => self_subset_other = false,
+                    (None, Some(_)) => other_subset_self = false,
+                    _ => (),  // If they are equal, do nothing
+                }
+            }
+        }
+        match (self_subset_other, other_subset_self) {
+            (true, true) => Some(Ordering::Equal),
+            (true, false) => Some(Ordering::Less),
+            (false, true) => Some(Ordering::Greater),
+            (false, false) => None,
+        }
     }
 }
 impl Game for TicTacToe {
@@ -31,10 +50,10 @@ impl Game for TicTacToe {
     fn trace(&self, _player: Player) -> Self::Trace {
         self.clone()
     }
-    fn perspective(&self, _trace: Self::Trace) -> Player { self.active_player() }
 
     fn active_player(&self) -> Player {
-        self.player()
+        let filled_squares = self.board.iter().flatten().filter(|x| x.is_some()).count();
+        if filled_squares%2==0 { Player::P1 } else { Player::P2 }
     }
 
     fn available_actions(&self) -> Vec<Self::Action> {
@@ -44,7 +63,7 @@ impl Game for TicTacToe {
     fn play(&self, action: &Self::Action) -> Self {
         let mut s = self.clone();
         let (x, y) = action;
-        s.board[*y][*x] = Some(self.player());
+        s.board[*y][*x] = Some(self.active_player());
         s
     }
 

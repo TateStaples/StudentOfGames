@@ -1,22 +1,66 @@
+use rand::seq::IndexedRandom;
+use StudentOfGames::games::AKQ::Akq;
 use StudentOfGames::games::rps::Rps;
 use StudentOfGames::obscuro::Obscuro;
-use StudentOfGames::utils::{Game, Player};
+use StudentOfGames::utils::{Game, Player, Reward};
+
+
+fn game_loop<G: Game>(human: Player) -> Reward {
+    let computer = human.other();
+    let mut game = G::new();
+    let mut solver: Obscuro<G> = Obscuro::default();
+    solver.study_position(game.trace(computer), computer);
+    // solver.debug();
+    while !game.is_over() {
+        let actions = game.available_actions();
+        match game.active_player() {
+            Player::Chance => {
+                // Randomly sample TODO: support non-uniform randomness
+                let action = actions.choose(&mut rand::rng()).unwrap().clone();
+                println!("Randomly plays: {:?}", action);
+                game = game.play(&action);
+            }
+            p if p == human => {
+                // Ask for input by user typing in the index (usize) of the actions
+                // println!("Trace: {:?}, Available actions: {:?}", game.trace(p), actions);
+                // let mut input = String::new();
+                // std::io::stdin().read_line(&mut input).expect("Failed to read line");
+                // if let Ok(action_idx) = input.trim().parse::<usize>() {
+                //     let action = &actions[action_idx];
+                //     println!("Human plays: {:?}", action);   
+                //     game = game.play(action);
+                // }
+                let action = &actions[0];
+                println!("Human plays: {:?}", action);   
+                game = game.play(action);
+            }
+            _ => {
+                // Computer Plays
+                let computer_trace = game.trace(computer);
+                let action = solver.make_move(computer_trace, computer);
+                println!("Computer plays: {:?}", action);
+                game = game.play(&action);
+                // I think the way the computer is sampling it's policy is wrong. It's also not stepping down correctly
+            }
+        }
+    }
+    println!("Evaluation: {}", game.evaluate());
+    println!("{:?}", game);
+    return game.evaluate();
+}
 
 fn main() {
-    let game = Rps::new();
-    let mut obscuro: Obscuro<Rps> = Obscuro::default();
-    obscuro.make_move(game.trace(Player::P1), Player::P1);
-    // plot_test()
+    type T = Akq;
+    game_loop::<T>(Player::P1);
+    
+    let mut reward = 0.0;
+    let iters = 50;
+    for _ in 0..iters {
+        reward += game_loop::<T>(Player::P1);
+    }
+    println!("Average reward: {}", reward / iters as Reward);
+    // let game = T::new();
+    // let mut obscuro: Obscuro<T> = Obscuro::default();
+    // obscuro.make_move(game.trace(Player::P1), Player::P1);
 }
 
-fn plot_test() {
-    use pgfplots::{axis::plot::Plot2D, Engine, Picture};
-
-    let mut plot = Plot2D::new();
-    plot.coordinates = (-100..100)
-        .into_iter()
-        .map(|i| (f64::from(i), f64::from(i*i)).into())
-        .collect();
-
-    Picture::from(plot).show_pdf(Engine::PdfLatex);
-}

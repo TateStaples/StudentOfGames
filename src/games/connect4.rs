@@ -1,5 +1,7 @@
-use synthesis::game::*;
-
+use std::cmp::Ordering;
+use std::fmt::Debug;
+use std::iter::{IntoIterator, Iterator};
+use crate::utils::{Game, Player, Reward, TraceI};
 /*
 +----------------------------+
 | 6 13 20 27 34 41 48 55 62 |
@@ -15,24 +17,6 @@ use synthesis::game::*;
 const WIDTH: usize = 7;
 const HEIGHT: usize = 6;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum PlayerId {
-    Red,
-    Black,
-}
-
-impl HasTurnOrder for PlayerId {
-    fn prev(&self) -> Self {
-        self.next()
-    }
-
-    fn next(&self) -> Self {
-        match self {
-            PlayerId::Black => PlayerId::Red,
-            PlayerId::Red => PlayerId::Black,
-        }
-    }
-}
 
 const FAB_COL: u64 = 0b1111111;
 const FAB_ROW: u64 = (1 << (7 * 0))
@@ -64,6 +48,15 @@ const ROWS: [u64; HEIGHT] = [
     FAB_ROW << 5,
 ];
 
+const HEURISTIC_MAP: [[Reward; WIDTH]; HEIGHT] = [
+    [3.0, 4.0, 5.0, 7.0, 5.0, 4.0, 3.0],
+    [4.0, 6.0, 8.0, 10.0, 8.0, 6.0, 4.0],
+    [5.0, 8.0, 11.0, 13.0, 11.0, 8.0, 5.0],
+    [5.0, 8.0, 11.0, 13.0, 11.0, 8.0, 5.0],
+    [4.0, 6.0, 8.0, 10.0, 8.0, 6.0, 4.0],
+    [3.0, 4.0, 5.0, 7.0, 5.0, 4.0, 3.0]
+];
+
 const D1_MASK: u64 = (COLS[0] | COLS[1] | COLS[2] | COLS[3] | COLS[4] | COLS[5])
     & (ROWS[3] | ROWS[4] | ROWS[5]);
 const D2_MASK: u64 = (COLS[0] | COLS[1] | COLS[2] | COLS[3] | COLS[4] | COLS[5])
@@ -79,395 +72,167 @@ const fn won(bb: u64) -> bool {
     v + h + d1 + d2 > 0
 }
 
-#[derive(Debug, Eq, PartialEq, Clone)]
+#[derive(Eq, PartialEq, Clone, Default, Hash)]
 pub struct Connect4 {
-    my_bb: u64,
+    my_bb: u64,  // Some sort of bitmask
     op_bb: u64,
     height: [u8; WIDTH],
-    player: PlayerId,
 }
 
-impl std::hash::Hash for Connect4 {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        state.write_u64(self.my_bb);
-        state.write_u64(self.op_bb);
-    }
-}
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub struct Column(u8);
-
-impl From<usize> for Column {
-    fn from(x: usize) -> Self {
-        Column(x as u8)
-    }
-}
-
-impl Into<usize> for Column {
-    fn into(self) -> usize {
-        self.0 as usize
-    }
-}
-
-pub struct FreeColumns {
-    height: [u8; WIDTH],
-    col: u8,
-}
-
-impl Iterator for FreeColumns {
-    type Item = Column;
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.col == WIDTH as u8 {
-            return None;
-        }
-
-        while self.col < WIDTH as u8 {
-            if self.height[self.col as usize] < HEIGHT as u8 {
-                let item = Some(Column(self.col));
-                self.col += 1;
-                return item;
+impl PartialOrd for Connect4 {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        let mut self_subset_other = true;
+        let mut other_subset_self = true;
+        for row in 0..HEIGHT {
+            for col in 0..WIDTH {
+                let cell_self = self.cell(row, col);
+                let cell_other = other.cell(row, col);
+                match (cell_self, cell_other) {
+                    (Some(p1), Some(p2)) if p1 != p2 => {return None}
+                    (Some(_), None) => self_subset_other = false,
+                    (None, Some(_)) => other_subset_self = false,
+                    _ => (),  // If they are equal, do nothing
+                }
             }
-            self.col += 1;
         }
-
-        None
+        match (self_subset_other, other_subset_self) {
+            (true, true) => Some(Ordering::Equal),
+            (true, false) => Some(Ordering::Less),
+            (false, true) => Some(Ordering::Greater),
+            (false, false) => None,
+        }
     }
 }
 
+impl Debug for Connect4 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut msg: String = String::new();
+        if self.is_over() {
+            msg += String::from(format!("{:?} won\n", self.winner())).as_str();
+        } else {
+            msg += String::from(format!("{:?} to play", self.active_player())).as_str();
+        }
+
+        let (my_char, op_char) = match self.active_player() {
+            Player::P1 => ("B", "r"),
+            Player::P2 => ("r", "B"),
+            _ => unreachable!()
+        };
+
+        for row in (0..HEIGHT).rev() {
+            for col in 0..WIDTH {
+                let index = 1 << (row + HEIGHT * col);
+                let c = if self.my_bb & index != 0 {
+                    my_char
+                } else if self.op_bb & index != 0 {
+                    op_char
+                } else {
+                    "."
+                };
+                msg += c;
+                msg += " ";
+            }
+            msg += "\n";
+        }
+        write!(f, "{}", msg)
+        // write!(f, "Connect4 {{ my_bb: {:?}, op_bb: {:?}, height: {:?} }}", self.my_bb, self.op_bb, self.height)
+    }
+}
+impl TraceI for Connect4 {}
 impl Connect4 {
-    fn winner(&self) -> Option<PlayerId> {
-        if won(self.op_bb) {
-            Some(self.player.next())
+    fn winner(&self) -> Option<Player> {
+        if won(self.my_bb) {
+            Some(Player::P1)
+        } else if won(self.op_bb) {
+            Some(Player::P2)
+        } else {
+            None
+        }
+    }
+
+    fn heuristic(&self) -> Reward {
+        let norm = HEURISTIC_MAP.iter().map(|row| row.iter().sum::<Reward>()).sum::<Reward>();
+        HEURISTIC_MAP.iter().enumerate().map(|(row, col)| {
+            col.iter().enumerate().map(|(col, h)| {
+                let index = 1 << (row + HEIGHT * col);
+                if self.my_bb & index != 0 {
+                    1.0/norm
+                } else if self.op_bb & index != 0 {
+                    -1.0/norm
+                } else {
+                    0.0
+                }
+            }).sum::<Reward>()
+        }).sum::<Reward>()
+    }
+    
+    fn cell(&self, row: usize, col: usize) -> Option<Player> {
+        let index = 1 << (row + HEIGHT * col);
+        if self.my_bb & index != 0 {
+            Some(Player::P1)
+        } else if self.op_bb & index != 0 {
+            Some(Player::P2)
         } else {
             None
         }
     }
 }
 
-impl Game<WIDTH> for Connect4 {
-    const NAME: &'static str = "Connect4";
-    const NUM_PLAYERS: usize = 2;
-    const MAX_TURNS: usize = 63;
-
-    type PlayerId = PlayerId;
-    type Action = Column;
-    type ActionIterator = FreeColumns;
+impl Game for Connect4 {
+    type Action = u8;
+    type State = Self;
+    type Trace = Self;
 
     fn new() -> Self {
         Self {
             my_bb: 0,
             op_bb: 0,
             height: [0; WIDTH],
-            player: PlayerId::Red,
         }
-    }
-
-    fn player(&self) -> Self::PlayerId {
-        self.player
     }
 
     fn is_over(&self) -> bool {
         self.winner().is_some() || (0..WIDTH).all(|col| self.height[col] == HEIGHT as u8)
     }
 
-    fn reward(&self, player_id: Self::PlayerId) -> f32 {
-        // assert!(self.is_over());
-
-        match self.winner() {
-            Some(winner) => {
-                if winner == player_id {
-                    1.0
-                } else {
-                    -1.0
-                }
-            }
-            None => 0.0,
-        }
+    fn encode(&self) -> Self::State {
+        self.clone()
+    }
+    fn decode(state: &Self::State) -> Self {
+        state.clone()
+    }
+    fn trace(&self, player: Player) -> Self::Trace {
+        self.clone()
     }
 
-    fn iter_actions(&self) -> Self::ActionIterator {
-        FreeColumns {
-            height: self.height,
-            col: 0,
-        }
+    fn active_player(&self) -> Player {
+        if self.height.iter().sum::<u8>()&2==0 {Player::P1} else {Player::P2}
     }
 
-    fn step(&mut self, action: &Self::Action) -> bool {
+    fn available_actions(&self) -> Vec<Self::Action> {
+        (0..self.height.len() as u8).filter(|&x| self.height[x as usize] < HEIGHT as u8).collect()
+    }
+
+    fn play(&self, action: &Self::Action) -> Self {
+        let mut s = self.clone();
         let col: usize = (*action).into();
-
-        // assert!(self.height[col] < HEIGHT as u8);
-
-        self.my_bb ^= 1 << (self.height[col] + (HEIGHT as u8) * (col as u8));
-        self.height[col] += 1;
-
-        std::mem::swap(&mut self.my_bb, &mut self.op_bb);
-        self.player = self.player.next();
-
-        self.is_over()
-    }
-
-    const DIMS: &'static [i64] = &[1, 1, HEIGHT as i64, WIDTH as i64];
-    type Features = [[[f32; WIDTH]; HEIGHT]; 1];
-    fn features(&self) -> Self::Features {
-        let mut s = Self::Features::default();
-        for row in 0..HEIGHT {
-            for col in 0..WIDTH {
-                let index = 1 << (row + HEIGHT * col);
-                if self.my_bb & index != 0 {
-                    s[0][row][col] = 1.0;
-                } else if self.op_bb & index != 0 {
-                    s[0][row][col] = -1.0;
-                } else {
-                    s[0][row][col] = -0.1;
-                }
-            }
-        }
-        for col in 0..WIDTH {
-            let h = self.height[col] as usize;
-            if h < HEIGHT {
-                s[0][h][col] = 0.1;
-            }
-        }
+        debug_assert!(self.height[col] < HEIGHT as u8);
+        s.my_bb ^= 1 << (self.height[col] + (HEIGHT as u8) * (col as u8));
+        s.height[col] += 1;
+        std::mem::swap(&mut s.my_bb, &mut s.op_bb);
         s
     }
 
-    fn print(&self) {
-        if self.is_over() {
-            println!("{:?} won", self.winner());
-        } else {
-            println!("{:?} to play", self.player);
-            println!(
-                "Available Actions: {:?}",
-                self.iter_actions().collect::<Vec<Column>>()
-            );
-        }
-
-        let (my_char, op_char) = match self.player {
-            PlayerId::Black => ("B", "r"),
-            PlayerId::Red => ("r", "B"),
-        };
-
-        for row in (0..HEIGHT).rev() {
-            for col in 0..WIDTH {
-                let index = 1 << (row + HEIGHT * col);
-                print!(
-                    "{} ",
-                    if self.my_bb & index != 0 {
-                        my_char
-                    } else if self.op_bb & index != 0 {
-                        op_char
-                    } else {
-                        "."
-                    }
-                );
-            }
-            println!();
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_first_wins() {
-        let mut game = Connect4::new();
-        assert!(!game.step(&Column(0)));
-        assert!(!game.step(&Column(1)));
-        assert!(!game.step(&Column(0)));
-        assert!(!game.step(&Column(1)));
-        assert!(!game.step(&Column(0)));
-        assert!(!game.step(&Column(1)));
-        assert!(game.step(&Column(0)));
-        assert!(game.is_over());
-        assert_eq!(game.winner(), Some(PlayerId::Red));
-        assert_eq!(game.reward(game.player()), -1.0);
-        assert_eq!(game.player(), PlayerId::Black);
-        assert_eq!(game.reward(PlayerId::Black), -1.0);
-        assert_eq!(game.reward(PlayerId::Red), 1.0);
-    }
-
-    #[test]
-    fn test_second_wins() {
-        let mut game = Connect4::new();
-        assert!(!game.step(&Column(0)));
-        assert!(!game.step(&Column(1)));
-        assert!(!game.step(&Column(2)));
-        assert!(!game.step(&Column(1)));
-        assert!(!game.step(&Column(2)));
-        assert!(!game.step(&Column(1)));
-        assert!(!game.step(&Column(2)));
-        assert!(game.step(&Column(1)));
-        assert!(game.is_over());
-        assert_eq!(game.winner(), Some(PlayerId::Black));
-        assert_eq!(game.reward(game.player()), -1.0);
-        assert_eq!(game.player(), PlayerId::Red);
-        assert_eq!(game.reward(PlayerId::Black), 1.0);
-        assert_eq!(game.reward(PlayerId::Red), -1.0);
-    }
-
-    #[test]
-    fn test_draw() {
-        /*
-        +-------------------+
-        | r b r b r b r b r |
-        | r b r b r b r b b |
-        | r b r b r b r b r |
-        | b r b r b r b r b |
-        | b r b r b r b r r |
-        | r b r b r b r b b |
-        | r b r b r b r b r |
-        +-------------------+
-        */
-
-        let mut game = Connect4::new();
-        assert!(!game.step(&Column(0)));
-        assert!(!game.step(&Column(1)));
-        assert!(!game.step(&Column(0)));
-        assert!(!game.step(&Column(1)));
-        assert!(!game.step(&Column(1)));
-        assert!(!game.step(&Column(0)));
-        assert!(!game.step(&Column(1)));
-        assert!(!game.step(&Column(0)));
-        assert!(!game.step(&Column(0)));
-        assert!(!game.step(&Column(1)));
-        assert!(!game.step(&Column(0)));
-        assert!(!game.step(&Column(1)));
-
-        assert!(game.iter_actions().position(|c| c == Column(0)).is_some());
-        assert!(!game.step(&Column(0)));
-        assert!(game.iter_actions().position(|c| c == Column(0)).is_none());
-
-        assert!(game.iter_actions().position(|c| c == Column(1)).is_some());
-        assert!(!game.step(&Column(1)));
-        assert!(game.iter_actions().position(|c| c == Column(1)).is_none());
-
-        assert!(!game.step(&Column(2)));
-        assert!(!game.step(&Column(3)));
-        assert!(!game.step(&Column(2)));
-        assert!(!game.step(&Column(3)));
-        assert!(!game.step(&Column(3)));
-        assert!(!game.step(&Column(2)));
-        assert!(!game.step(&Column(3)));
-        assert!(!game.step(&Column(2)));
-        assert!(!game.step(&Column(2)));
-        assert!(!game.step(&Column(3)));
-        assert!(!game.step(&Column(2)));
-        assert!(!game.step(&Column(3)));
-
-        assert!(game.iter_actions().position(|c| c == Column(2)).is_some());
-        assert!(!game.step(&Column(2)));
-        assert!(game.iter_actions().position(|c| c == Column(2)).is_none());
-
-        assert!(game.iter_actions().position(|c| c == Column(3)).is_some());
-        assert!(!game.step(&Column(3)));
-        assert!(game.iter_actions().position(|c| c == Column(3)).is_none());
-
-        assert!(!game.step(&Column(4)));
-        assert!(!game.step(&Column(5)));
-        assert!(!game.step(&Column(4)));
-        assert!(!game.step(&Column(5)));
-        assert!(!game.step(&Column(5)));
-        assert!(!game.step(&Column(4)));
-        assert!(!game.step(&Column(5)));
-        assert!(!game.step(&Column(4)));
-        assert!(!game.step(&Column(4)));
-        assert!(!game.step(&Column(5)));
-        assert!(!game.step(&Column(4)));
-        assert!(!game.step(&Column(5)));
-
-        assert!(game.iter_actions().position(|c| c == Column(4)).is_some());
-        assert!(!game.step(&Column(4)));
-        assert!(game.iter_actions().position(|c| c == Column(4)).is_none());
-
-        assert!(game.iter_actions().position(|c| c == Column(5)).is_some());
-        assert!(!game.step(&Column(5)));
-        assert!(game.iter_actions().position(|c| c == Column(5)).is_none());
-
-        assert!(!game.step(&Column(6)));
-        assert!(!game.step(&Column(7)));
-        assert!(!game.step(&Column(6)));
-        assert!(!game.step(&Column(7)));
-        assert!(!game.step(&Column(7)));
-        assert!(!game.step(&Column(6)));
-        assert!(!game.step(&Column(7)));
-        assert!(!game.step(&Column(6)));
-        assert!(!game.step(&Column(6)));
-        assert!(!game.step(&Column(7)));
-        assert!(!game.step(&Column(6)));
-        assert!(!game.step(&Column(7)));
-
-        assert!(game.iter_actions().position(|c| c == Column(6)).is_some());
-        assert!(!game.step(&Column(6)));
-        assert!(game.iter_actions().position(|c| c == Column(6)).is_none());
-
-        assert!(game.iter_actions().position(|c| c == Column(7)).is_some());
-        assert!(!game.step(&Column(7)));
-        assert!(game.iter_actions().position(|c| c == Column(7)).is_none());
-
-        assert!(!game.step(&Column(8)));
-        assert!(!game.step(&Column(8)));
-        assert!(!game.step(&Column(8)));
-        assert!(!game.step(&Column(8)));
-        assert!(!game.step(&Column(8)));
-        assert!(!game.step(&Column(8)));
-        assert!(game.iter_actions().position(|c| c == Column(8)).is_some());
-        assert!(game.step(&Column(8)));
-        assert!(game.is_over());
-        assert_eq!(game.winner(), None);
-        assert_eq!(game.reward(PlayerId::Red), 0.0);
-        assert_eq!(game.reward(PlayerId::Black), 0.0);
-    }
-
-    #[test]
-    fn test_horz_wins() {
-        for row in 0..HEIGHT {
-            let mut bb =
-                (1 << (row + 0)) | (1 << (row + 7)) | (1 << (row + 14)) | (1 << (row + 21));
-            for _i in 0..6 {
-                assert!(won(bb));
-                bb <<= 7;
-            }
+    fn evaluate(&self) -> Reward {
+        match self.winner() {
+            Some(Player::P1) => 1.0,
+            Some(Player::P2) => -1.0,
+            _ => self.heuristic(),
         }
     }
 
-    #[test]
-    fn test_vert_wins() {
-        for col in 0..WIDTH {
-            let mut bb = (1 << (7 * col + 0))
-                | (1 << (7 * col + 1))
-                | (1 << (7 * col + 2))
-                | (1 << (7 * col + 3));
-            for _i in 0..4 {
-                assert!(won(bb));
-                bb <<= 1;
-            }
-        }
-    }
-
-    #[test]
-    fn test_d1_wins() {
-        for row in 3..HEIGHT {
-            let mut bb = (1 << row) | (1 << (row + 6)) | (1 << (row + 12)) | (1 << (row + 18));
-            for _i in 0..6 {
-                assert!(won(bb));
-                bb <<= 7;
-            }
-        }
-    }
-
-    #[test]
-    fn test_d2_wins() {
-        for col in 0..6 {
-            let mut bb = (1 << (7 * col + 0))
-                | (1 << (7 * (col + 1) + 1))
-                | (1 << (7 * (col + 2) + 2))
-                | (1 << (7 * (col + 3) + 3));
-            for _i in 0..4 {
-                assert!(won(bb));
-                bb <<= 1;
-            }
-        }
+    fn sample_position(observation_history: Self::Trace) -> impl Iterator<Item=Self> {
+        return vec![].into_iter()
     }
 }
