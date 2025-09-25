@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::fmt::{Debug, Formatter};
+use std::fmt::Debug;
 use crate::games::AKQ::AkqAction::{Bet, Call, Deal, Fold};
 use crate::games::AKQ::AkqCard::{A, K, Q};
 use crate::utils::*;
@@ -77,7 +77,7 @@ impl PartialOrd for PublicState {
             (_, Predeal) | (_, Postdeal)
             | (CallCall, Call) | (CallBet, Call) | (CallBetCall, Call) | (CallBetFold, Call)
             | (BetCall, Call) | (BetCall, BetCall) | (BetCall, BetFold)
-            | (CallBetCall, CallBet) | (CallBetCall, CallBet)
+            | (CallBetCall, CallBet)
             => Some(Ordering::Greater),
             _ => None,
         }

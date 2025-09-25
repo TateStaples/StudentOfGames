@@ -1,12 +1,11 @@
 use std::cmp::Ordering;
 use std::fmt::{Debug, Formatter};
 use rand::distr::weighted::WeightedIndex;
-// use rand::distributions::{Distribution, WeightedIndex};
 use rand::prelude::{Distribution, IteratorRandom};
 use rand::{rng};
 use crate::utils::*;
 
-
+type ActionDistribution = Vec<Probability>;
 // ---------- Policy ----------
 /// Action Policy 
 /// Implements the CFR+ accumulation and action probability calculation
@@ -24,18 +23,16 @@ pub struct Policy<A: ActionI> {
 }
 
 impl<A: ActionI> Policy<A> {
-    pub fn from_actions(actions: Vec<A>, player: Player) -> Self {
-        Self::from_rewards(actions.into_iter().map(|a| (a, 0.0)).collect(), player)
-    }
-
+    // ---------- Constructor ----------- //
+    /// Start with policy proportional to expected rewards
     pub fn from_rewards(items: Vec<(A, Reward)>, player: Player) -> Self {
+        // TODO: I think the obscuro paper initializes either uniform or w/ 100% best
         let (actions, expectations): (Vec<A>, Vec<Reward>) = items.into_iter().unzip();
-        debug_assert!(expectations.iter().all(|&r| (-5.0..=5.0).contains(&r)));
         let n = expectations.len();
         let mut p = Policy {
             player,
             actions,
-            counterfactuals: expectations,
+            counterfactuals: expectations.into_iter().map(|x| x.max(0.0)).collect::<Vec<_>>(),
             expansions: vec![0; n],
             acc_regrets: vec![10.0; n],
             avg_strategy: vec![1.0; n],
@@ -46,128 +43,13 @@ impl<A: ActionI> Policy<A> {
         p.update(1);
         p
     }
-    #[inline]
-    fn multiplier(&self) -> Reward {
-        match self.player {
-            Player::P1 => 1.0,
-            Player::P2 => -1.0,
-            _ => 1.0,
-        }
-    }
-
-    fn quality(&self, idx: usize) -> f64 {
-        // very light UCB/PUCT-style score using expansions + expectations
-        let n = self.expansions.iter().sum::<usize>().max(1) as f64;
-        let v = self.counterfactuals[idx];
-        let c = 1.25;
-        v + c * ((n.ln() / (self.expansions[idx].max(1) as f64)).sqrt())
-    }
-
-    fn puct(&self) -> Vec<Probability> {
-        if self.actions.is_empty() { return vec![]; }
-        let mut best = 0usize;
-        for i in 1..self.actions.len() {
-            if self.quality(i) > self.quality(best) { best = i; }
-        }
-        let mut out = vec![0.0; self.actions.len()];
-        out[best] = 1.0;
-        out
-    }
-
-    pub fn inst_policy(&self) -> Vec<Probability> {
-        let sum: f64 = self.acc_regrets.iter().sum();
-        if sum <= 0.0 || !sum.is_finite() {
-            // uniform
-            let p = 1.0 / (self.actions.len() as Probability);
-            return vec![p; self.actions.len()];
-        }
-        self.acc_regrets.iter().map(|r| r / sum).collect()
-    }
-
-    fn exploration_policy(&self) -> Vec<Probability> {
-        // simple 50/50 between puct single-arm and exploit mix
-        let puct = self.puct();
-        let exploit = self.inst_policy();
-        if puct.is_empty() { return exploit; }
-        puct.iter().zip(exploit.iter()).map(|(a,b)| 0.5*a + 0.5*b).collect()
-    }
-
-    fn sample_from(&self, probs: &[Probability]) -> A {
-        let net: f64 = probs.iter().sum();
-        if probs.is_empty() {
-            panic!("empty policy actions");
-        }
-        if net <= 0.0 { return self.actions.iter().choose(&mut rng()).unwrap().clone(); }
-        let weights: Vec<f64> = probs.iter().map(|p| if *p <= 0.0 { 0.0 } else { p / net }).collect();
-        let dist = WeightedIndex::new(weights).unwrap();
-        let idx = dist.sample(&mut rng());
-        self.actions[idx].clone()
-    }
-
-    /// Sample your action policy for exploring more of the space
-    pub fn explore(&self) -> A {
-        let policy = self.exploration_policy();
-        self.sample_from(&policy)
-    }
-    /// Sample your action policy to greedily get what you believe to be best
-    pub fn exploit(&self) -> A {
-        let policy = self.inst_policy();
-        self.sample_from(&policy)
-    }
-    /// Optimization from the Obscuro paper (maybe test without this option)
-    pub fn purified(&self) -> A {
-        // choose among top-K by exploit prob with tiebreaking random among equals
-        let probs = &self.avg_strategy;
-        println!("Purified policy: {:.2?}", probs.iter().
-            map(|x| x/probs.iter().sum::<Probability>())
-            .zip(self.actions.iter()).collect::<Vec<_>>());
-        // let mut idxs: Vec<(usize, f64)> = probs.iter().cloned().enumerate().collect();
-        // idxs.sort_by(|a,b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
-        // let k = idxs.iter().take(MAX_SUPPORT.max(1)).map(|(i,_)| *i).collect::<Vec<_>>();
-        self.sample_from(probs)
-        // self.actions[*k.iter().choose(&mut rng()).unwrap()].clone()
-    }
-    pub fn best_action(&self) -> A {
-        let idx = (0..self.actions.len())
-            .max_by(|&i,&j| self.acc_regrets[i].partial_cmp(&self.acc_regrets[j]).unwrap_or(Ordering::Equal))
-            .unwrap();
-        self.actions[idx].clone()
-    }
-    /// Update the state of the policy to inform further actions
-    /// a: the action we want to update
-    /// v: the expected value of the action weighted by the odds of being in position to play it
-    pub fn add_counterfactual(&mut self, a: &A, r: Reward, p: Probability) {
-        // println!("add_counterfactual: {:?} plays {:?} get {} w/ {}", self.player, a, r, p);
-        let v: Counterfactual = r * p;
-        let idx = self.actions.iter().position(|x| x == a).unwrap();
-        // debug_assert!(r.is_finite() && (r == 0.0 || r.abs()>0.1));
-        self.counterfactuals[idx] += v;
-    }
-    /// Update the degree of exploration to inform further search
-    pub fn add_expansion(&mut self, a: &A) {
-        let idx = self.actions.iter().position(|x| x == a).unwrap();
-        self.expansions[idx] += 1;
-    }
-    /// The expected value of this (exploit) action distribution
-    pub fn expectation(&self) -> Reward {
-        if self.counterfactuals.is_empty() { return 0.0; }
-        let policy = self.inst_policy();
-        debug_assert!(policy.iter().sum::<Probability>().abs()-1.0 < 0.0001);
-        self.counterfactuals.iter().zip(policy.iter()).map(|(e,p)| e * p).sum()
-    }
-    /// Get the probability you would choose a given action
-    pub fn p_exploit(&self, a: &A) -> Probability {
-        // println!("p_exploit: {:?}, {:?}", a, self.actions);
-        let idx = self.actions.iter().position(|x| x == a).unwrap();
-        let sum: f64 = self.acc_regrets.iter().sum();
-        if sum <= 0.0 { return 0.0; }
-        self.acc_regrets[idx] / sum
-    }
+    // ---------- Updators ----------- //
     /// Use all the recent actions to calculate new action distribution
     pub fn update(&mut self, total_updates: usize) {
         if total_updates == self.last_set || self.player == Player::Chance {
             return;
         }
+        debug_assert!(self.player != Player::Chance);
         self.last_set = total_updates;
         if self.first_update.is_none() { self.first_update = Some(self.last_set-1); }
         let num_updates = (total_updates - self.first_update.unwrap()).max(200) as Reward;
@@ -196,6 +78,129 @@ impl<A: ActionI> Policy<A> {
         //     .max_by(|&i,&j| self.acc_regrets[i].partial_cmp(&self.acc_regrets[j]).unwrap_or(Ordering::Equal));
         // if let Some(i) = best { self.stable[i] = true; }
         self.counterfactuals = vec![0.0; self.counterfactuals.len()];
+    }
+    /// Update the state of the policy to inform further actions
+    /// a: the action we want to update
+    /// v: the expected value of the action weighted by the odds of being in position to play it
+    pub fn add_counterfactual(&mut self, a: &A, r: Reward, p: Probability) {
+        let v: Counterfactual = r * p;
+        let idx = self.actions.iter().position(|x| x == a).unwrap();
+        self.counterfactuals[idx] += v;
+    }
+    /// Update the degree of exploration to inform further search
+    pub fn add_expansion(&mut self, a: &A) {
+        let idx = self.actions.iter().position(|x| x == a).unwrap();
+        self.expansions[idx] += 1;
+    }
+    // ---------- Properties ----------- //
+    /// The expected value of this (exploit) action distribution
+    pub fn expectation(&self) -> Reward {
+        if self.counterfactuals.is_empty() { return 0.0; }
+        let policy = self.inst_policy();
+        debug_assert!(policy.iter().sum::<Probability>().abs()-1.0 < 0.0001);
+        self.counterfactuals.iter().zip(policy.iter()).map(|(e,p)| e * p).sum()
+    }
+    /// Get the probability you would choose a given action
+    pub fn p_exploit(&self, a: &A) -> Probability {
+        // println!("p_exploit: {:?}, {:?}", a, self.actions);
+        let idx = self.actions.iter().position(|x| x == a).unwrap();
+        let sum: f64 = self.acc_regrets.iter().sum();
+        if sum <= 0.0 { return 0.0; }
+        self.acc_regrets[idx] / sum
+    }
+    // ---------- Policies ----------- //
+
+    /// The policy from net_regrets after the last update (prefer using avg_policy)
+    pub fn inst_policy(&self) -> ActionDistribution {
+        let sum: f64 = self.acc_regrets.iter().sum();
+        if sum <= 0.0 || !sum.is_finite() {
+            // uniform
+            let p = 1.0 / (self.actions.len() as Probability);
+            return vec![p; self.actions.len()];
+        }
+        self.acc_regrets.iter().map(|r| r / sum).collect()
+    }
+    /// Calculated policy to be used for exploration
+    fn exploration_policy(&self) -> ActionDistribution {
+        // simple 50/50 between puct single-arm and exploit mix
+        let puct = self.puct();
+        let exploit = self.inst_policy();
+        if puct.is_empty() { return exploit; }
+        puct.iter().zip(exploit.iter()).map(|(a,b)| 0.5*a + 0.5*b).collect()
+    }
+
+    /// Given probabilty weighting (doesn't need to sum to 1), return an action
+    fn sample_from(&self, probs: &ActionDistribution) -> A {
+        let net: f64 = probs.iter().sum();
+        if probs.is_empty() {
+            panic!("empty policy actions");
+        }
+        if net <= 0.0 { return self.actions.iter().choose(&mut rng()).unwrap().clone(); }
+        let weights: Vec<f64> = probs.iter().map(|p| if *p <= 0.0 { 0.0 } else { p / net }).collect();
+        let dist = WeightedIndex::new(weights).unwrap();
+        let idx = dist.sample(&mut rng());
+        self.actions[idx].clone()
+    }
+    // ---------- Types of Action ----------- //
+    /// Sample your action policy for exploring more of the space
+    pub fn explore(&self) -> A {
+        let policy = self.exploration_policy();
+        self.sample_from(&policy)
+    }
+    /// Sample your action policy to greedily get what you believe to be best
+    pub fn exploit(&self) -> A {
+        let policy = self.inst_policy();
+        self.sample_from(&policy)
+    }
+    /// Optimization from the Obscuro paper (maybe test without this option)
+    pub fn purified(&self) -> A {
+        // choose among top-K by exploit prob with tiebreaking random among equals
+        let probs = &self.avg_strategy;
+        println!("Purified policy: {:.2?}", probs.iter().
+            map(|x| x/probs.iter().sum::<Probability>())
+            .zip(self.actions.iter()).collect::<Vec<_>>());
+        // let mut idxs: Vec<(usize, f64)> = probs.iter().cloned().enumerate().collect();
+        // idxs.sort_by(|a,b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
+        // let k = idxs.iter().take(MAX_SUPPORT.max(1)).map(|(i,_)| *i).collect::<Vec<_>>();
+        self.sample_from(probs)
+        // self.actions[*k.iter().choose(&mut rng()).unwrap()].clone()
+    }
+    /// Get the action with the highest expectation
+    pub fn best_action(&self) -> A {
+        let idx = (0..self.actions.len())
+            .max_by(|&i,&j| self.acc_regrets[i].partial_cmp(&self.acc_regrets[j]).unwrap_or(Ordering::Equal))
+            .unwrap();
+        self.actions[idx].clone()
+    }
+    // ---------- Utils ----------- //
+    /// How to adjust game reward into reward for the acting player
+    #[inline]
+    fn multiplier(&self) -> Reward {
+        match self.player {
+            Player::P1 => 1.0,
+            Player::P2 => -1.0,
+            _ => 1.0,  // FIXME: idk if this makes sense -> Chance should not be able to adjust
+        }
+    }
+    /// How good would this action be for tree expansion
+    /// very light UCB/PUCT-style score using expansions + expectations
+    fn quality(&self, action_idx: usize) -> Reward {
+        // very light UCB/PUCT-style score using expansions + expectations
+        let n = self.expansions.iter().sum::<usize>().max(1) as f64;
+        let v = self.counterfactuals[action_idx];
+        let c = 1.25;
+        v + c * ((n.ln() / (self.expansions[action_idx].max(1) as f64)).sqrt())
+    }
+    /// Action policy according to PUCT (Polynomial Upper Confidence bounds applied to Trees)
+    fn puct(&self) -> Vec<Probability> {
+        if self.actions.is_empty() { return vec![]; }
+        let mut best = 0usize;
+        for i in 1..self.actions.len() {
+            if self.quality(i) > self.quality(best) { best = i; }
+        }
+        let mut out = vec![0.0; self.actions.len()];
+        out[best] = 1.0;
+        out
     }
 }
 

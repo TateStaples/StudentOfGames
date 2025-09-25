@@ -1,9 +1,7 @@
-use std::cmp::Ordering;
-use std::collections::HashMap;
-use std::fmt::{Debug, Formatter};
-use std::os::macos::raw::stat;
 use crate::games::liars_die::LiarsDieAction::{BullShit, Deal, Raise};
 use crate::utils::*;
+use std::cmp::Ordering;
+use std::fmt::Debug;
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, Ord, PartialOrd)]
 pub enum Die {
@@ -48,8 +46,8 @@ impl PartialOrd for LiarsDieTrace {
         }
         
         if self.bet_history == other.bet_history {Some(Ordering::Equal)}
-        else if self.bet_history.starts_with(&other.bet_history) {Some(Ordering::Less)}
-        else if other.bet_history.starts_with(&self.bet_history) {Some(Ordering::Greater)}
+        else if self.bet_history.starts_with(&other.bet_history) {Some(Ordering::Greater)}
+        else if other.bet_history.starts_with(&self.bet_history) {Some(Ordering::Less)}
         else {None}
     }
 }
@@ -212,10 +210,12 @@ impl Game for LiarsDie {
 }
 
 mod neural {
-    use crate::games::resources::model_55_joker::Model;
     use crate::games::liars_die::*;
-    use burn::tensor::{backend::Backend, Tensor};
+    use crate::games::resources::model_55_joker::Model;
     use burn::backend::ndarray::{NdArray as B, NdArrayDevice as Device};
+    use burn::tensor::Tensor;
+    use std::cell::UnsafeCell;
+    use std::sync::OnceLock;
     // If you switch to WGPU later: use burn::backend::wgpu::{Wgpu as B, WgpuDevice as Device};
 
     // ----- constants inferred from your Python calc_args -----
@@ -320,9 +320,33 @@ mod neural {
     }
 
     // ----- eval with explicit device & rank-1 tensors -----
-    pub fn nn_eval(g: &LiarsDie) -> Reward {
-        let device = Device::default(); // CPU; swap backend/types above for GPU
 
+    // Wrap a T so we can stick it in statics without Sync.
+    struct NotSync<T>(UnsafeCell<T>);
+    unsafe impl<T> Sync for NotSync<T> {} // <-- YOU PROMISE no concurrent access
+
+    static DEVICE: OnceLock<NotSync<Device>> = OnceLock::new();
+    static MODEL:  OnceLock<NotSync<Model<B>>> = OnceLock::new();
+
+    #[inline]
+    fn device() -> &'static Device {
+        let ns = DEVICE.get_or_init(|| NotSync(UnsafeCell::new(Device::default())));
+        // SAFETY: caller must ensure single-threaded or external synchronization.
+        unsafe { &*ns.0.get() }
+    }
+
+    #[inline]
+    fn model_mut() -> &'static mut Model<B> {
+        let ns = MODEL.get_or_init(|| {
+            let dev = device();
+            NotSync(UnsafeCell::new(Model::<B>::new(dev)))
+        });
+        // SAFETY: caller must ensure single-threaded or external synchronization.
+        unsafe { &mut *ns.0.get() }
+    }
+
+    pub fn nn_eval(g: &LiarsDie) -> Reward {
+        let device = Device::default();
         let pub_feat = encode_public(g);
         let priv_feat = encode_private(g);
 
@@ -332,8 +356,8 @@ mod neural {
 
         // Use the constructor your generated file provides:
         // common options are new(&Device), init(&Device), or default()
-        let model = Model::<B>::new(&device);
-        
+        let model = model_mut();//Model::<B>::new(&DEVICE);
+
         let out = model.forward(priv_tensor, pub_tensor); // -> Tensor<B,1> with 1 scalar
         let data = out.into_data();
         let val = data.as_slice::<f32>().unwrap()[0];

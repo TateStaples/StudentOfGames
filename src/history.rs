@@ -1,12 +1,11 @@
-use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
-use std::fmt::{Debug, Formatter};
-use std::hash::{DefaultHasher, Hash, Hasher};
-use std::rc::Rc;
-use log::info;
-use crate::utils::*;
 use crate::info::*;
 use crate::policy::Policy;
+use crate::utils::*;
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::fmt::{Debug, Formatter};
+use std::hash::{Hash, Hasher};
+use std::rc::Rc;
 
 // ---------- History ----------
 // #[derive(PartialEq)]
@@ -112,7 +111,7 @@ impl<G: Game> History<G> {
         if let History::Visited { state, reach, .. } = self {
             let game = G::decode(state);
             let hero = game.active_player();
-            let villan = hero.other();
+            // let villan = hero.other();
             let (hero_trace, villan_trace) = game.identifier();
             let actions = game.available_actions();
 
@@ -168,6 +167,17 @@ impl<G: Game> History<G> {
         match self {
             History::Terminal { .. } => unimplemented!("You should not be here"),
             History::Visited { reach, .. } | History::Expanded { reach, ..} => reach.values().product(),
+        }
+    }
+    
+    pub fn renormalize_reach(&mut self, total_prob: Probability) {
+        match self {
+            History::Terminal { .. } => unimplemented!("You should not be here"),
+            History::Visited { reach, .. } | History::Expanded { reach, ..} => {
+                for (_, p) in reach.iter_mut() {
+                    *p /= total_prob;
+                }
+            }
         }
     }
     

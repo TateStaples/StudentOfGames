@@ -1,17 +1,18 @@
 use std::fmt::{Debug};
 use std::hash::Hash;
-use crate::history::History;
 
 // ---------- Tune-ables ---------- // 
-pub const SOLVE_TIME_SECS: f64 = 3.0;
-pub const MIN_INFO_SIZE: usize = 64;
-pub const MAX_SUPPORT: usize = 3;
+pub const SOLVE_TIME_SECS: f64 = 30.0;  // How long the bot is allowed to spend developing strat
+pub const MIN_INFO_SIZE: usize = 64;  // What root history size the bot should sample to
+pub const MAX_SUPPORT: usize = 3;  // (not currently used) number of top actions to consider
 
-// ---------- Basic types ---------- //
+// ---------- Basic types (renamed for pretty) ---------- //
 pub type Reward = f64;
 pub type Counterfactual = Reward;  // Syntactically different but Semantically same as Reward
 pub type Probability = f64;
 
+/// We only look at two player games (for provable convergence)
+/// at all points a player is active or the game will do something random
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum Player { P1, P2, Chance }
 
@@ -28,12 +29,11 @@ impl Player {
 }
 
 // ---------- Traits the game must provide ----------
-pub trait ActionI: Clone + Eq + Hash + Debug {}
-impl<T: Clone + Eq + Hash + Debug> ActionI for T {}
-
-pub trait TraceI: Clone + Eq + Hash + Debug + Default + PartialOrd  {
-    // fn player(&self) -> Player;
-}
+/// Properties we want all game actions to have
+pub trait ActionI: Clone + Eq + Hash + Debug {}  // see Game trait fo rmore details
+impl<T: Clone + Eq + Hash + Debug> ActionI for T {}  // for some reason rust wants this
+/// Properities we want to all Traces to have
+pub trait TraceI: Clone + Eq + Hash + Debug + Default + PartialOrd  {} // see Game trait fo rmore details
 
 
 pub trait Game: Sized + Clone + Debug + Hash {
@@ -44,15 +44,17 @@ pub trait Game: Sized + Clone + Debug + Hash {
     /// Represent a given player's view of what has happened
     type Trace: TraceI;
 
-    // Encode/decode world state
-    fn encode(&self) -> Self::State;
-    fn decode(state: &Self::State) -> Self;
+    /// Requires a constructor
     fn new() -> Self;
 
-    // Public trace + perspective helpers
+    // Encode/decode world state
+    /// Convert between full game and compressed state (default to State = Self)
+    fn encode(&self) -> Self::State;
+    /// Convert between compressed state and full game (default to State = Self)
+    fn decode(state: &Self::State) -> Self;
+
     /// Gets the summary of what a given player knows in this board state
     fn trace(&self, player: Player) -> Self::Trace;
-    // Local dynamics
     /// The player whose turn it is
     fn active_player(&self) -> Player;
     /// What actions the active_player can take
@@ -63,16 +65,14 @@ pub trait Game: Sized + Clone + Debug + Hash {
     fn is_over(&self) -> bool;
     /// Heuristic Evaluataion of the current position (+ good for P1, - for P2). Must be implemented at terminal
     fn evaluate(&self) -> Reward; // a quick static eval
-
-    // Pluggable sampler to seed subgames
     /// Given what a player has seen, what possible positions could they be in
     fn sample_position(observation_history: Self::Trace) -> impl Iterator<Item = Self>;
-    
+    /// I think this was useful for checking if we had already added this game to tree (might be deprecated)
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         let hash_item = self.identifier();
         hash_item.hash(state);
     }
-    
+    /// We uniquely identify a gamestate by what all the players know (hidden state should be superpositions until Chance nodes)
     fn identifier(&self) -> (Self::Trace, Self::Trace) {
         let active = self.active_player();
         let hero = if active == Player::Chance {Player::P1} else { active };
