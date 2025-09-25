@@ -118,7 +118,7 @@ impl<A: ActionI> Policy<A> {
     pub fn purified(&self) -> A {
         // choose among top-K by exploit prob with tiebreaking random among equals
         let probs = &self.avg_strategy;
-        println!("Purified policy: {:?}", probs.iter().
+        println!("Purified policy: {:.2?}", probs.iter().
             map(|x| x/probs.iter().sum::<Probability>())
             .zip(self.actions.iter()).collect::<Vec<_>>());
         // let mut idxs: Vec<(usize, f64)> = probs.iter().cloned().enumerate().collect();
@@ -184,7 +184,7 @@ impl<A: ActionI> Policy<A> {
             let ir = mult * (cfvs - baseline);
             let r = self.acc_regrets[i];
             // println!("mult: {},\tinst_r: {:.2},\tbaseline: {:.2},\tcfvs: {:.2},\tr: {:.2},\taction: {:?}", mult, ir, baseline, cfvs, self.acc_regrets[i], self.actions[i]);
-            self.acc_regrets[i] = (momentum_coeff * self.acc_regrets[i] + ir).max(0.0);
+            self.acc_regrets[i] = (momentum_coeff * r + ir).max(0.0);
         }
         // debug_assert!(self.acc_regrets.iter().all(|&r| r > 0.0));
         for (i, p) in self.inst_policy().iter().enumerate() {

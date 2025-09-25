@@ -65,6 +65,14 @@ impl<G: Game> SubgameRoot<G> {
             children: items,
         }
     }
+    
+    pub fn print_family(&self) {
+        println!("Subgame Root:");
+        for (idx, child) in self.children.iter().enumerate() {
+            print!("    Resolver Gadget {}:", idx);
+            child.print_family();
+        }
+    }
 }
 /// Safe-Resolving Gadget to determine whether the opponent would enter this subgame.
 struct ResolverGadget<G: Game> {
@@ -75,6 +83,14 @@ struct ResolverGadget<G: Game> {
     children: Vec<History<G>>,
 }
 type PreResolver<G> = (Probability, Reward, Vec<History<G>>);
+impl<G: Game> ResolverGadget<G> {
+    pub fn print_family(&self) {
+        println!("RG({:?})", self.info.trace);
+        for child in &self.children {
+            child.print_family_rec(2, 5);
+        }
+    }
+}
 
 // ---------- Solver ----------
 pub struct Obscuro<G: Game> {
@@ -137,7 +153,6 @@ impl<G: Game> Obscuro<G> {
         std::mem::swap(&mut j0, &mut self.subgame_root.children);
         j0
     }
-
     fn drain_resolver(resolver: &mut ResolverGadget<G>) -> Vec<History<G>> {
         let mut j0 = Vec::new();
         std::mem::swap(&mut j0, &mut resolver.children);
@@ -156,8 +171,9 @@ impl<G: Game> Obscuro<G> {
             .into_iter()
             .flat_map(|mut x| Self::drain_resolver(&mut x).into_iter())
             .collect();
-
+        // println!("Root histories: {:?}", root_histories);
         let covered = Self::k_cover(root_histories, hist.clone(), player, 3);
+        // println!("Covered: {:?}", covered);
         let mut positions: HashMap<G::Trace, PreResolver<G>> = covered.
             into_iter()
             .fold(HashMap::new(), |mut map, history| {
@@ -180,8 +196,6 @@ impl<G: Game> Obscuro<G> {
 
         let mut data_count = positions.len();
         let mut new_positions = G::sample_position(hist.clone());
-        let vec = new_positions.collect::<Vec<_>>();
-        let mut new_positions = vec.clone().into_iter();
 
         while data_count < MIN_INFO_SIZE {
             if let Some(g) = new_positions.next() {
@@ -192,7 +206,7 @@ impl<G: Game> Obscuro<G> {
                     .any(|x| x == game_hash) {
                     continue;
                 }
-                // println!("Constructing new position: {:?}", g);
+                println!("Constructing new position: {:?}", g);
                 let s = History::new(g.clone(), HashMap::new());  // Start with probability 1.0 (relative to its root)
                 let opp_trace = g.trace(other);
                 let alt = g.evaluate();
@@ -214,7 +228,7 @@ impl<G: Game> Obscuro<G> {
         self.subgame_root = root;
     }
 
-    fn k_cover(mut root_histories: Vec<History<G>>, hist: G::Trace, mut player: Player, mut k: u8) -> Vec<History<G>> {
+    fn k_cover(mut root_histories: Vec<History<G>>, hist: G::Trace, mut player: Player, k: u8) -> Vec<History<G>> {
         // k=1, what do I think it might be, k=2, what might they think it might be, k=3: what might they think I might think
         // Can get k=\infty by iterating to a fixed point
         debug_assert!(!matches!(player, Player::Chance));
@@ -245,6 +259,10 @@ impl<G: Game> Obscuro<G> {
         hist: &HashSet<G::Trace>,
         player: Player
     ) -> (Option<History<G>>, Vec<History<G>>, HashSet<G::Trace>) {
+        // println!("k_cover_rec: {:?} looking for {:?} ({:?})", root, hist, player);
+        if matches!(root, History::Terminal { .. }) {
+            return (Some(root), vec![], HashSet::new())
+        }
         let my_trace = root.players_view(player);
         let comparisons: Vec<std::cmp::Ordering> = hist.iter()
             .filter_map(|x| {
@@ -260,7 +278,7 @@ impl<G: Game> Obscuro<G> {
             (None, vec![root], HashSet::from([other_view]))
         } else if !comparisons.is_empty() && matches!(root, History::Expanded { .. }) {
             // Pull children out safely (without moving `root`)
-            let mut children_vec = if let History::Expanded { children, .. } = &mut root {
+            let children_vec = if let History::Expanded { children, .. } = &mut root {
                 // println!("Exploring their children: {:?}", children);
                 std::mem::take(children) // leaves `children` as empty vec
             } else {
@@ -362,7 +380,7 @@ impl<G: Game> Obscuro<G> {
             let prior_probability = child.prior_probability;
             let p_resolve = resolver.p_exploit(&ENTER);
             let reach_prob = p_max * (prior_probability) * p_resolve + (1.0-p_max) * p_maxmargin;
-            // maxmargin.add_counterfactual(&idx, reach_prob, 1.0);
+            maxmargin.add_counterfactual(&idx, reach_prob, 1.0);
         }
 
     }
@@ -389,14 +407,14 @@ impl<G: Game> Obscuro<G> {
                 Self::apply_updates(history, self.total_updates);
                 enter_value += sample_chance * h_value;
             }
-            // resolver.add_counterfactual(&ENTER, enter_value, r_prob);
-            // resolver.add_counterfactual(&SKIP, *alt, r_prob);
-            // resolver.update(self.total_updates);
+            resolver.add_counterfactual(&ENTER, enter_value, r_prob);
+            resolver.add_counterfactual(&SKIP, *alt, r_prob);
+            resolver.update(self.total_updates);
             let resolver_value = (1.0 - p_enter) * *alt + p_enter * enter_value;
-            // root_policy.add_counterfactual(&resolver_idx, resolver_value, 1.0);
+            root_policy.add_counterfactual(&resolver_idx, resolver_value, 1.0);
             root_value += resolver_value * *prior_probability;
         }
-        // root_policy.update(self.total_updates);
+        root_policy.update(self.total_updates);
     }
 
     fn make_utilities(
@@ -464,6 +482,7 @@ impl<G: Game> Obscuro<G> {
         debug_assert!(!matches!(player, Player::Chance));
         self.study_position(observation.clone(), player);
         // return purified best from the chosen expanded node; if missing, fall back to random on any infoset for player
+        // println!("I see {:?}, out of {:?}", observation, self.info_sets.keys());
         self.info_sets[&observation].borrow().policy.purified()
     }
 
@@ -475,19 +494,20 @@ impl<G: Game> Obscuro<G> {
 
         {
             let Self {subgame_root, info_sets, ..} = self;
-            subgame_root.children[0].children[0].full_expand(info_sets);
+            // subgame_root.children[0].children[0].full_expand(info_sets);
+            // println!("{:?}", subgame_root.children[0].children[0]);
+            // if let History::Visited {state, ..} = &subgame_root.children[0].children[0] {
+            //     println!("{:?}", G::decode(state));
+            // }
+            println!("SIZE: {}", self.size());
             // subgame_root.children[0].children[0].print_family();
+            // self.subgame_root.print_family();
         }
-        // let mut p1 = vec![];
-        // let mut p2 = vec![];
-        let mut timer = 100_000;
         while self.start_time.elapsed().unwrap_or(Duration::from_secs(0)) < Duration::from_millis((SOLVE_TIME_SECS*1000.0) as u64) {
-            // self.expansion_step();
+            for _ in 0..10 {
+                self.expansion_step();
+            }
             self.solve_step();
-            // if timer == 0 {
-            //     timer = 100_000;
-                // self.debug();
-            // } else { timer -= 1 }
         }
         // self.debug();
     }

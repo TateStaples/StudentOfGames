@@ -1,9 +1,8 @@
+use burn::backend::NdArray;
+use StudentOfGames::games::liars_die::LiarsDie;
 use rand::seq::IndexedRandom;
-use StudentOfGames::games::AKQ::Akq;
-use StudentOfGames::games::rps::Rps;
 use StudentOfGames::obscuro::Obscuro;
 use StudentOfGames::utils::{Game, Player, Reward};
-
 
 fn game_loop<G: Game>(human: Player) -> Reward {
     let computer = human.other();
@@ -17,22 +16,19 @@ fn game_loop<G: Game>(human: Player) -> Reward {
             Player::Chance => {
                 // Randomly sample TODO: support non-uniform randomness
                 let action = actions.choose(&mut rand::rng()).unwrap().clone();
-                println!("Randomly plays: {:?}", action);
+                // println!("Randomly plays: {:?}", action);
                 game = game.play(&action);
             }
             p if p == human => {
                 // Ask for input by user typing in the index (usize) of the actions
-                // println!("Trace: {:?}, Available actions: {:?}", game.trace(p), actions);
-                // let mut input = String::new();
-                // std::io::stdin().read_line(&mut input).expect("Failed to read line");
-                // if let Ok(action_idx) = input.trim().parse::<usize>() {
-                //     let action = &actions[action_idx];
-                //     println!("Human plays: {:?}", action);   
-                //     game = game.play(action);
-                // }
-                let action = &actions[0];
-                println!("Human plays: {:?}", action);   
-                game = game.play(action);
+                println!("Trace: {:?}, Available actions: {:?}", game.trace(p), actions);
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input).expect("Failed to read line");
+                if let Ok(action_idx) = input.trim().parse::<usize>() {
+                    let action = &actions[action_idx];
+                    println!("Human plays: {:?}", action);   
+                    game = game.play(action);
+                }
             }
             _ => {
                 // Computer Plays
@@ -46,17 +42,18 @@ fn game_loop<G: Game>(human: Player) -> Reward {
     }
     println!("Evaluation: {}", game.evaluate());
     println!("{:?}", game);
-    return game.evaluate();
+    game.evaluate()
 }
 
 fn main() {
-    type T = Akq;
-    game_loop::<T>(Player::P1);
+    // games::resources::test::main();
+    type T = LiarsDie;
+    game_loop::<T>(Player::P2);
     
     let mut reward = 0.0;
     let iters = 50;
     for _ in 0..iters {
-        reward += game_loop::<T>(Player::P1);
+        reward += game_loop::<T>(Player::P2);
     }
     println!("Average reward: {}", reward / iters as Reward);
     // let game = T::new();

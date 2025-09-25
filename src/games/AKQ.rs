@@ -100,7 +100,7 @@ impl PublicState {
             (PublicState::Bet, Fold ) => PublicState::BetFold,   // "b" + f  => "bf" (T)
             (PublicState::CallBet, Call ) => PublicState::CallBetCall,   // "cb"+ c  => "cbc" (T)
             (PublicState::CallBet, Fold ) => PublicState::CallBetFold,   // "cb"+ f  => "cbf" (T)
-            (PublicState::Predeal, Deal(a, b)) => PublicState::Postdeal,
+            (PublicState::Predeal, Deal(_, _)) => PublicState::Postdeal,
             _ => panic!("Illegal betting action {:?} at history {:?}", a, self),
         }
     }
@@ -115,6 +115,7 @@ impl PublicState {
         }
     }
 }
+
 /// History codes (public-only):
 /// ""=0, "c"=1, "b"=2, "cc"=3, "bc"=4, "bf"=5, "cb"=6, "cbc"=7, "cbf"=8
 #[derive(Clone, Eq, PartialEq, Default, Debug, Hash)]
@@ -227,7 +228,7 @@ impl Game for Akq {
     fn sample_position(observation_history: Self::Trace) -> impl Iterator<Item=Self> {
         let player = observation_history.code.player();
         let AkqTrace { code, my_card } = observation_history;
-        match (player.clone(), code.clone()) { 
+        match (player, code.clone()) { 
             (Player::Chance, PublicState::Predeal) => vec![Akq::new()].into_iter(),
             (Player::P1, _) => { 
                 vec![A, K, Q].into_iter()

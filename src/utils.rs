@@ -3,7 +3,7 @@ use std::hash::Hash;
 use crate::history::History;
 
 // ---------- Tune-ables ---------- // 
-pub const SOLVE_TIME_SECS: f64 = 1.0;
+pub const SOLVE_TIME_SECS: f64 = 3.0;
 pub const MIN_INFO_SIZE: usize = 64;
 pub const MAX_SUPPORT: usize = 3;
 
@@ -74,7 +74,8 @@ pub trait Game: Sized + Clone + Debug + Hash {
     }
     
     fn identifier(&self) -> (Self::Trace, Self::Trace) {
-        let hero = self.active_player();
+        let active = self.active_player();
+        let hero = if active == Player::Chance {Player::P1} else { active };
         let villan = hero.other();
         let hero_trace = self.trace(hero);
         let villan_trace = self.trace(villan);

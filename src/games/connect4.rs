@@ -154,7 +154,7 @@ impl Connect4 {
     fn heuristic(&self) -> Reward {
         let norm = HEURISTIC_MAP.iter().map(|row| row.iter().sum::<Reward>()).sum::<Reward>();
         HEURISTIC_MAP.iter().enumerate().map(|(row, col)| {
-            col.iter().enumerate().map(|(col, h)| {
+            col.iter().enumerate().map(|(col, _)| {
                 let index = 1 << (row + HEIGHT * col);
                 if self.my_bb & index != 0 {
                     1.0/norm
@@ -232,7 +232,7 @@ impl Game for Connect4 {
         }
     }
 
-    fn sample_position(observation_history: Self::Trace) -> impl Iterator<Item=Self> {
-        return vec![].into_iter()
+    fn sample_position(_observation_history: Self::Trace) -> impl Iterator<Item=Self> {
+        vec![].into_iter()
     }
 }
