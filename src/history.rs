@@ -16,34 +16,8 @@ pub enum History<G: Game> {
         children: Vec<(G::Action, History<G>)>, player: Player, villan_trace: G::Trace },
 }
 
-impl<G: Game> Hash for History<G> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        let hash_item = self.identifier();
-        hash_item.hash(state)
-    }
-}
-
-impl <G: Game> Debug for History<G> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self { 
-            History::Terminal { payoff, .. } => write!(f, "Terminal({:?})", payoff),
-            History::Visited { state, .. } => write!(f, "Visited({:?})", G::decode(&state.clone()).trace(Player::P1)),
-            History::Expanded { info, player, children, .. } => {
-                // trace, actions, distribution
-                let info = &info.borrow();
-                let trace = info.trace.clone();
-                let child_info = children.iter().map(|(a, _)|a).collect::<Vec<_>>();
-                // let child_info = children.len();
-                // let policy = info.policy.clone();
-                write!(f, "Expanded({:?}, {:?}, {:?})", trace, player, child_info)
-                // write!(f, "Expanded({:?}, {:?}, {:?}, {:.1?})", trace, player, policy, reach)
-            },
-        }
-    }
-}
-
-
 impl<G: Game> History<G> {
+    /// Constructor from the game state and reach probabilities
     pub fn new(game: G, reach: HashMap<Player, Probability>) -> Self {
         let payoff = game.evaluate();
         if game.is_over() {
@@ -52,60 +26,7 @@ impl<G: Game> History<G> {
         let state = game.encode();
         History::Visited { state, payoff, reach }
     }
-
-    pub fn print(&self) {
-        println!("{:?}", self);
-    }
-
-    pub fn print_family(&self) {
-        self.print_family_rec(0, 5);
-    }
-    
-    pub fn size(&self) -> usize {
-        match self {
-            History::Terminal { .. } | History::Visited { .. } => 1,
-            History::Expanded { children, .. } => 1 + children.iter().map(|(_, h)| h.size()).sum::<usize>(),
-        }
-    }
-    pub fn print_family_rec(&self, tab_level: usize, depth: usize) {
-        print!("{}", "    ".repeat(tab_level));
-        self.print();
-        if depth == 0 { return; }
-        if let History::Expanded { children, .. } = self {
-            for (_, h) in children.iter() {
-                print!("{}", tab_level);
-                // print!("{:?} -> ", a);
-                h.print_family_rec(tab_level + 1, depth - 1);
-            }
-        }
-    }
-
-    pub fn payoff(&self) -> Reward {
-        match self {
-            History::Terminal { payoff, .. } | History::Visited { payoff, .. } => *payoff,
-            History::Expanded { info, .. } => info.borrow_mut().policy.expectation(),
-        }
-    }
-
-    pub fn player(&self) -> Player {
-        match self {
-            History::Terminal { .. } => panic!("terminal has no player"),
-            History::Visited { state, .. } => G::decode(state).active_player(),
-            History::Expanded { info, .. } => info.borrow().player,
-        }
-    }
-
-    pub fn trace(&self) -> G::Trace {
-        match self {
-            History::Terminal { .. } => unimplemented!(),
-            History::Visited { state, .. } => {
-                let g = G::decode(state);
-                g.trace(g.active_player())
-            }
-            History::Expanded { info, .. } => info.borrow().trace.clone(),
-        }
-    }
-
+    /// Growing Tree: take a leaf node and grow its children into new nodes
     pub fn expand(&mut self, infosets: &mut HashMap<G::Trace, InfoPtr<G::Action, G::Trace>>) {
         let me = self.player();
         if let History::Visited { state, reach, .. } = self {
@@ -145,31 +66,7 @@ impl<G: Game> History<G> {
             panic!("Can only expand a visited state");
         }
     }
-    
-    pub fn full_expand(&mut self, infosets: &mut HashMap<G::Trace, InfoPtr<G::Action, G::Trace>>) {
-        if let History::Visited { .. } = self {
-            self.expand(infosets);
-        }
-        if let History::Expanded { children, .. } = self {
-            for (_, h) in children.iter_mut() {
-                h.full_expand(infosets);
-            }
-        }
-    }
-    
-    pub fn reach_prob(&self, player: Player) -> Probability {
-        match self {
-            History::Terminal { .. } => unimplemented!("You should not be here"),
-            History::Visited { reach, .. } | History::Expanded { reach, ..} => *reach.get(&player).unwrap_or(&1.0)
-        }
-    }
-    pub fn net_reach_prob(&self) -> Probability {
-        match self {
-            History::Terminal { .. } => unimplemented!("You should not be here"),
-            History::Visited { reach, .. } | History::Expanded { reach, ..} => reach.values().product(),
-        }
-    }
-    
+    /// After lowering the tree, rescale probabilities
     pub fn renormalize_reach(&mut self, total_prob: Probability) {
         match self {
             History::Terminal { .. } => unimplemented!("You should not be here"),
@@ -180,7 +77,23 @@ impl<G: Game> History<G> {
             }
         }
     }
-    
+    // ---------- Enum Agnostic Getters --------- //
+    /// What the expectation (p1=+) is from the current position
+    pub fn payoff(&self) -> Reward {
+        match self {
+            History::Terminal { payoff, .. } | History::Visited { payoff, .. } => *payoff,
+            History::Expanded { info, .. } => info.borrow_mut().policy.expectation(),
+        }
+    }
+    /// Who the given player is
+    pub fn player(&self) -> Player {
+        match self {
+            History::Terminal { .. } => panic!("terminal has no player"),
+            History::Visited { state, .. } => G::decode(state).active_player(),
+            History::Expanded { info, .. } => info.borrow().player,
+        }
+    }
+    /// What the given player knows
     pub fn players_view(&self, player: Player) -> G::Trace {
         let (hero_trace, villan_trace) = self.identifier();
         if player == self.player() {
@@ -189,7 +102,44 @@ impl<G: Game> History<G> {
             villan_trace
         }
     }
-    
+    /// What the acting player knows
+    pub fn trace(&self) -> G::Trace {
+        match self {
+            History::Terminal { .. } => unimplemented!(),
+            History::Visited { state, .. } => {
+                let g = G::decode(state);
+                g.trace(g.active_player())
+            }
+            History::Expanded { info, .. } => info.borrow().trace.clone(),
+        }
+    }
+    /// How likely is a given player to choose to be in the position
+    pub fn reach_prob(&self, player: Player) -> Probability {
+        match self {
+            History::Terminal { .. } => unimplemented!("You should not be here"),
+            History::Visited { reach, .. } | History::Expanded { reach, ..} => *reach.get(&player).unwrap_or(&1.0)
+        }
+    }
+    /// How likely is the game to end in this position (product of all players chocies)
+    pub fn net_reach_prob(&self) -> Probability {
+        match self {
+            History::Terminal { .. } => unimplemented!("You should not be here"),
+            History::Visited { reach, .. } | History::Expanded { reach, ..} => reach.values().product(),
+        }
+    }
+    // ---------- Utils --------- //
+    /// Debug tool to grow the full game tree (don't use on non-trivial games)
+    pub fn full_expand(&mut self, infosets: &mut HashMap<G::Trace, InfoPtr<G::Action, G::Trace>>) {
+        if let History::Visited { .. } = self {
+            self.expand(infosets);
+        }
+        if let History::Expanded { children, .. } = self {
+            for (_, h) in children.iter_mut() {
+                h.full_expand(infosets);
+            }
+        }
+    }
+    /// Fully identify a history by what both players know
     pub fn identifier(&self) -> (G::Trace, G::Trace) {
         match self {
             History::Terminal { .. } => panic!("Why do you want my hash!"),
@@ -199,6 +149,59 @@ impl<G: Game> History<G> {
             },
             History::Expanded { info, villan_trace, .. } => {
                 (info.borrow().trace.clone(), villan_trace.clone())
+            },
+        }
+    }
+    pub fn print(&self) {
+        println!("{:?}", self);
+    }
+    /// Print the whole game tree
+    pub fn print_family(&self) {
+        self.print_family_rec(0, 5);
+    }
+    /// Recursive step in printing the whole game tree
+    pub fn print_family_rec(&self, tab_level: usize, depth: usize) {
+        print!("{}", "    ".repeat(tab_level));
+        self.print();
+        if depth == 0 { return; }
+        if let History::Expanded { children, .. } = self {
+            for (_, h) in children.iter() {
+                print!("{}", tab_level);
+                // print!("{:?} -> ", a);
+                h.print_family_rec(tab_level + 1, depth - 1);
+            }
+        }
+    }
+    /// Recursively find the size of the whole game tree
+    pub fn size(&self) -> usize {
+        match self {
+            History::Terminal { .. } | History::Visited { .. } => 1,
+            History::Expanded { children, .. } => 1 + children.iter().map(|(_, h)| h.size()).sum::<usize>(),
+        }
+    }
+}
+
+impl<G: Game> Hash for History<G> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let hash_item = self.identifier();
+        hash_item.hash(state)
+    }
+}
+
+impl <G: Game> Debug for History<G> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            History::Terminal { payoff, .. } => write!(f, "Terminal({:?})", payoff),
+            History::Visited { state, .. } => write!(f, "Visited({:?})", G::decode(&state.clone()).trace(Player::P1)),
+            History::Expanded { info, player, children, .. } => {
+                // trace, actions, distribution
+                let info = &info.borrow();
+                let trace = info.trace.clone();
+                let child_info = children.iter().map(|(a, _)|a).collect::<Vec<_>>();
+                // let child_info = children.len();
+                // let policy = info.policy.clone();
+                write!(f, "Expanded({:?}, {:?}, {:?})", trace, player, child_info)
+                // write!(f, "Expanded({:?}, {:?}, {:?}, {:.1?})", trace, player, policy, reach)
             },
         }
     }
