@@ -1,0 +1,333 @@
+"""
+CFR+ (Counterfactual Regret Minimization Plus) in Python
+
+This file implements a minimal, readable CFR+ trainer for two‑player zero‑sum
+extensive‑form games, along with a complete Kuhn Poker environment to demo it.
+
+Key features:
+- Regret‑Matching+ (clipped regrets at zero)
+- Alternating updates (update regrets for one player per iteration)
+- Linear averaging with optional delay (CFR+ “delayed averaging”)
+- Chance node support (full enumeration)
+- Simple, self‑contained Game/State interfaces
+
+Usage (example):
+    python cfr_plus_python.py
+
+This will train on Kuhn Poker for a number of iterations and print the learned
+average strategies for each information set.
+"""
+from __future__ import annotations
+from dataclasses import dataclass, field
+from typing import Dict, List, Tuple, Iterable, Optional
+import math
+
+
+# -------------------------
+# Game/State base interfaces
+# -------------------------
+
+class GameState:
+    """Abstract game state for a 2‑player zero‑sum extensive‑form game.
+
+    Concrete subclasses must implement the following methods/properties.
+    """
+    def current_player(self) -> int:
+        """Return the player to act: 0, 1, or -1 for chance. If terminal, return 2."""
+        raise NotImplementedError
+
+    def is_terminal(self) -> bool:
+        raise NotImplementedError
+
+    def utility(self, player: int) -> float:
+        """Terminal utility for `player` (0 or 1). Only valid if `is_terminal()`."""
+        raise NotImplementedError
+
+    def legal_actions(self) -> List:
+        """List of legal actions at this state (for chance or a player)."""
+        raise NotImplementedError
+
+    def next_state(self, action) -> "GameState":
+        raise NotImplementedError
+
+    def info_key(self, player: int) -> str:
+        """Information set key for `player` at this state. Only called on player nodes."""
+        raise NotImplementedError
+
+    def chance_outcomes(self) -> List[Tuple[object, float]]:
+        """Return (action, prob) pairs for chance nodes. Only called when player == -1."""
+        raise NotImplementedError
+
+
+class Game:
+    def root_state(self) -> GameState:
+        raise NotImplementedError
+
+
+# -------------------------
+# CFR+ core
+# -------------------------
+
+@dataclass
+class InfoSet:
+    key: str
+    actions: List
+    regret_sums: Dict[object, float] = field(default_factory=dict)
+    strategy_sums: Dict[object, float] = field(default_factory=dict)
+
+    def _ensure_actions(self):
+        for a in self.actions:
+            self.regret_sums.setdefault(a, 0.0)
+            self.strategy_sums.setdefault(a, 0.0)
+
+    def current_strategy(self) -> Dict[object, float]:
+        """Compute the regret‑matching+ strategy from accumulated regrets."""
+        self._ensure_actions()
+        positives = {a: max(0.0, r) for a, r in self.regret_sums.items()}
+        total = sum(positives.values())
+        if total > 1e-12:
+            return {a: positives[a] / total for a in self.actions}
+        # If all non‑positive, play uniform
+        n = len(self.actions)
+        return {a: 1.0 / n for a in self.actions}
+
+    def accumulate_avg(self, strategy: Dict[object, float], weight: float) -> None:
+        """Accumulate into average strategy with given weight."""
+        if weight <= 0.0:
+            return
+        for a, p in strategy.items():
+            self.strategy_sums[a] = self.strategy_sums.get(a, 0.0) + weight * p
+
+    def average_strategy(self) -> Dict[object, float]:
+        self._ensure_actions()
+        total = sum(self.strategy_sums.values())
+        if total > 1e-12:
+            return {a: self.strategy_sums[a] / total for a in self.actions}
+        # Fallback uniform
+        n = len(self.actions)
+        return {a: 1.0 / n for a in self.actions}
+
+
+class CFRPlusTrainer:
+    def __init__(
+        self,
+        game: Game,
+        t_skip: int = 0,
+        alternating_updates: bool = True,
+        linear_averaging: bool = True,
+    ) -> None:
+        self.game = game
+        self.t_skip = max(0, t_skip)
+        self.alternating_updates = alternating_updates
+        self.linear_averaging = linear_averaging
+        self.infosets: Dict[str, InfoSet] = {}
+
+    # ---- Public API ----
+
+    def train(self, iterations: int) -> None:
+        for t in range(1, iterations + 1):
+            up = (t + 1) % 2 if self.alternating_updates else 0  # 0/1 alternating if True
+            weight = max(0, t - self.t_skip) if self.linear_averaging else 1
+            self._cfr(self.game.root_state(), r0=1.0, r1=1.0, rc=1.0, up=up, t=t, avg_w=weight)
+
+    def average_strategies(self) -> Dict[str, Dict[object, float]]:
+        return {k: iset.average_strategy() for k, iset in self.infosets.items()}
+
+    # ---- Internal: single traversal (from the perspective of `up`) ----
+
+    def _cfr(
+        self,
+        state: GameState,
+        r0: float,
+        r1: float,
+        rc: float,
+        up: int,
+        t: int,
+        avg_w: int,
+    ) -> float:
+        # Terminal
+        if state.is_terminal():
+            return state.utility(up)
+
+        player = state.current_player()
+
+        # Chance
+        if player == -1:
+            util = 0.0
+            for action, prob in state.chance_outcomes():
+                ns = state.next_state(action)
+                util += prob * self._cfr(ns, r0, r1, rc * prob, up, t, avg_w)
+            return util
+
+        # Player node
+        actions = state.legal_actions()
+        key = state.info_key(player)
+        info = self.infosets.setdefault(key, InfoSet(key=key, actions=list(actions)))
+        # Strategy for this node via regret‑matching+
+        strategy = info.current_strategy()
+
+        # Average strategy accumulation: weight by (opponent reach * chance reach * linear weight)
+        opp_reach = r1 if player == 0 else r0
+        info.accumulate_avg(strategy, weight=opp_reach * rc * (avg_w if avg_w > 0 else 0))
+
+        # Action utilities from the perspective of `up`
+        action_utils: Dict[object, float] = {}
+        node_util = 0.0
+        for a in actions:
+            ns = state.next_state(a)
+            if player == 0:
+                u = self._cfr(ns, r0 * strategy[a], r1, rc, up, t, avg_w)
+            else:
+                u = self._cfr(ns, r0, r1 * strategy[a], rc, up, t, avg_w)
+            action_utils[a] = u
+            node_util += strategy[a] * u
+
+        # CFR+ regret update only for the updating player this iteration
+        if player == up:
+            cf_reach = opp_reach * rc  # counterfactual reach of others (opp * chance)
+            for a in actions:
+                regret_delta = action_utils[a] - node_util
+                info.regret_sums[a] = max(0.0, info.regret_sums.get(a, 0.0) + cf_reach * regret_delta)
+
+        return node_util
+
+
+# -------------------------
+# Kuhn Poker implementation
+# -------------------------
+
+@dataclass(frozen=True)
+class KuhnState(GameState):
+    cards: Optional[Tuple[int, int]]  # None -> chance node to deal; otherwise (p0, p1)
+    history: str                      # sequence over {"p"=check/pass, "b"=bet, "c"=call, "f"=fold}
+
+    # --- Helpers ---
+    def _next_player(self) -> int:
+        if self.is_terminal():
+            return 2
+        if self.cards is None:
+            return -1  # chance to deal
+        # player to act alternates unless a bet awaits response
+        # Start with player 0
+        # History cases:
+        # ""      -> 0
+        # "p"     -> 1
+        # "b"     -> 1 (must respond c/f)
+        # "pp"    -> terminal
+        # "pb"    -> 0 (must respond c/f)
+        # "bf/pbf/bc/pbc" -> terminal
+        if self.history == "":
+            return 0
+        if self.history == "p":
+            return 1
+        if self.history == "b":
+            return 1
+        if self.history == "pb":
+            return 0
+        return 2  # terminal
+
+    # --- Interface ---
+    def current_player(self) -> int:
+        return self._next_player()
+
+    def is_terminal(self) -> bool:
+        h = self.history
+        return h in ("pp", "bf", "pbf", "bc", "pbc")
+
+    def utility(self, player: int) -> float:
+        assert self.is_terminal()
+        h = self.history
+        # Showdown cases
+        if h == "pp" or h == "bc" or h == "pbc":
+            assert self.cards is not None
+            p0, p1 = self.cards
+            winner = 0 if p0 > p1 else 1
+            magnitude = 1.0 if h == "pp" else 2.0
+            return magnitude if player == winner else -magnitude
+        # Fold cases: bettor wins +1
+        if h == "bf":
+            winner = 0  # P0 bet, P1 folded
+            return 1.0 if player == winner else -1.0
+        if h == "pbf":
+            winner = 1  # P1 bet after P0 checked, then P0 folded
+            return 1.0 if player == winner else -1.0
+        raise RuntimeError("Unreachable")
+
+    def legal_actions(self) -> List[str]:
+        p = self.current_player()
+        if p == -1:
+            # chance will return outcomes via chance_outcomes
+            return []
+        if p == 2:
+            return []
+        h = self.history
+        if h in ("", "p"):
+            return ["p", "b"]  # check/pass or bet
+        if h in ("b", "pb"):
+            return ["c", "f"]  # call or fold
+        return []
+
+    def next_state(self, action) -> "KuhnState":
+        p = self.current_player()
+        if p == -1:
+            # action is a dealt (p0, p1) tuple
+            assert isinstance(action, tuple) and len(action) == 2
+            return KuhnState(cards=(action[0], action[1]), history="")
+        # player action: just append to history
+        return KuhnState(cards=self.cards, history=self.history + str(action))
+
+    def info_key(self, player: int) -> str:
+        assert self.cards is not None
+        card = self.cards[player]
+        return f"P{player}|{card}|{self.history}"
+
+    def chance_outcomes(self) -> List[Tuple[Tuple[int, int], float]]:
+        # Deal distinct cards from {1,2,3}. Higher number = higher card
+        outcomes: List[Tuple[Tuple[int, int], float]] = []
+        deck = [1, 2, 3]
+        for i in range(3):
+            for j in range(3):
+                if i == j:
+                    continue
+                outcomes.append(((deck[i], deck[j]), 1.0 / 6.0))
+        return outcomes
+
+
+class KuhnPoker(Game):
+    def root_state(self) -> GameState:
+        return KuhnState(cards=None, history="")
+
+
+# -------------------------
+# Demo / CLI
+# -------------------------
+
+def _format_strategy(dist: Dict[object, float]) -> str:
+    items = sorted(dist.items(), key=lambda kv: str(kv[0]))
+    return ", ".join(f"{a}:{p:.3f}" for a, p in items)
+
+
+def main() -> None:
+    game = KuhnPoker()
+    trainer = CFRPlusTrainer(game, t_skip=1000, alternating_updates=True, linear_averaging=True)
+    iterations = 20000
+    trainer.train(iterations)
+
+    print(f"Trained for {iterations} iterations (CFR+ with t_skip={trainer.t_skip}).\n")
+    avg = trainer.average_strategies()
+
+    # Nice order for display
+    def order_key(k: str) -> Tuple[int, int, str]:
+        # k looks like "P0|card|history"
+        p = int(k[1])
+        parts = k.split("|")
+        card = int(parts[1])
+        hist = parts[2]
+        return (p, card, hist)
+
+    for k in sorted(avg.keys(), key=order_key):
+        print(f"{k:10s} -> {_format_strategy(avg[k])}")
+
+
+if __name__ == "__main__":
+    main()

@@ -16,7 +16,7 @@ pub struct Policy<A: ActionI> {
     counterfactuals: Vec<Reward>,
     expansions: Vec<usize>,
     acc_regrets: Vec<Counterfactual>,
-    avg_strategy: Vec<Probability>, 
+    pub avg_strategy: Vec<Probability>, 
     stable: Vec<bool>,
     first_update: Option<usize>,
     last_set: usize
@@ -130,7 +130,7 @@ impl<A: ActionI> Policy<A> {
     }
 
     /// Given probabilty weighting (doesn't need to sum to 1), return an action
-    fn sample_from(&self, probs: &ActionDistribution) -> A {
+    pub fn sample_from(&self, probs: &ActionDistribution) -> A {
         let net: f64 = probs.iter().sum();
         if probs.is_empty() {
             panic!("empty policy actions");

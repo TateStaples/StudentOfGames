@@ -2,7 +2,7 @@ use std::fmt::{Debug};
 use std::hash::Hash;
 
 // ---------- Tune-ables ---------- // 
-pub const SOLVE_TIME_SECS: f64 = 30.0;  // How long the bot is allowed to spend developing strat
+pub const SOLVE_TIME_SECS: f64 = 10.0;  // How long the bot is allowed to spend developing strat
 pub const MIN_INFO_SIZE: usize = 64;  // What root history size the bot should sample to
 pub const MAX_SUPPORT: usize = 3;  // (not currently used) number of top actions to consider
 
@@ -10,6 +10,8 @@ pub const MAX_SUPPORT: usize = 3;  // (not currently used) number of top actions
 pub type Reward = f64;
 pub type Counterfactual = Reward;  // Syntactically different but Semantically same as Reward
 pub type Probability = f64;
+pub type Strategy = Vec<Probability>;  // Indexed by available actions
+pub type ReplayBuffer<G: Game> = Vec<(G::Trace, Vec<Probability>, Reward)>;
 
 /// We only look at two player games (for provable convergence)
 /// at all points a player is active or the game will do something random
@@ -35,10 +37,18 @@ impl<T: Clone + Eq + Hash + Debug> ActionI for T {}  // for some reason rust wan
 /// Properities we want to all Traces to have
 pub trait TraceI: Clone + Eq + Hash + Debug + Default + PartialOrd  {} // see Game trait fo rmore details
 
-
+pub trait GameSolver<G: Game>: Default {
+    fn score_position(&self, game: &G::State, player: Player) -> Reward;
+    fn guess_strategy(&self, game: &G::State, player: Player) -> Strategy;
+    fn infer(&mut self, game: &G::State, player: Player) -> (Reward, Strategy) {
+        (self.score_position(game, player), self.guess_strategy(game, player))
+    }
+    fn learn_from(&mut self, replay: ReplayBuffer<G>);
+} // Marker trait for solvers
 pub trait Game: Sized + Clone + Debug + Hash {
     /// Optional compressed representatino of game state for recovery
     type State: Clone;
+    type Solver: GameSolver<Self>;
     /// The actions that could possibly be taken
     type Action: ActionI;
     /// Represent a given player's view of what has happened

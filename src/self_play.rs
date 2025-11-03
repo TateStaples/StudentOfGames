@@ -1,28 +1,58 @@
 use rand::prelude::IndexedRandom;
 use crate::obscuro::Obscuro;
-use crate::utils::{Game, Player, Reward};
+use crate::utils::{Game, Player, Probability, ReplayBuffer, Reward};
 
+
+pub fn student_of_games<G: Game>(iterations: i32, greedy_depth: i32) -> Obscuro<G> {
+    let mut solver: Obscuro<G> = Obscuro::default();
+    for iter in 0..iterations {
+        println!("=== Iteration {} ===", iter);
+        let replay_buffer = self_play::<G>(greedy_depth);
+        solver.learn_from(replay_buffer);
+        // solver.debug();
+    }
+    solver
+}
 /// Do self-learning by playing a game against yourself & updating your learning policies
-fn self_play<G: Game>() {
-    // TODO: alphazero has initial action distribution policy. Should I add something similar
+fn self_play<G: Game>(GREEDY_DEPTH: i32) -> ReplayBuffer<G> {
+    // Setup
     let mut game = G::new();
     let mut solver: Obscuro<G> = Obscuro::default();
     solver.study_position(game.trace(Player::P1), Player::P2);
+    let mut depth = 0;
+    let mut replay_buffer: ReplayBuffer<G> = vec![];
+    
+    // Main loop
     while !game.is_over() {
-        // TODO: periodically add root games to replay buffer for study/learning
         let player = game.active_player();
         if player == Player::Chance {
-            let action = game.available_actions().choose(&mut rand::rng()).unwrap().clone();
+            let action = game.available_actions().choose(&mut rand::rng()).unwrap().clone();  // TODO: support non-uniform chance actions
             println!("Randomly plays: {:?}", action);
             game = game.play(&action);
             continue;
         } 
-        // TODO: you want to mix in uniform because you are still exploring
-        // After a certain depth play greedy
-        let action = solver.make_move(game.trace(player), player);
+        let observation = game.trace(player);
+        solver.study_position(observation.clone(), player);
+        
+        // Update the replay buffer
+        let policy = solver.inst_policy(observation.clone()); 
+        let avg_strat: &Vec<Probability> = &policy.avg_strategy; 
+        let expectation: Reward = policy.expectation();
+        replay_buffer.push((observation.clone(), avg_strat.clone(), expectation));  // Maybe only push random subset
+        
+        // Load the action
+        let action = if depth > GREEDY_DEPTH {
+            policy.purified()
+        } else {
+            let exploring_policy = policy.avg_strategy.iter().map(|x| 0.5 * x + 1.0/(policy.actions.len() as Probability)).collect();
+            let exploring_action = policy.sample_from(exploring_policy);
+            exploring_action
+        };
         println!("Bot({:?}) plays: {:?}", player, action);
         game = game.play(&action);
+        depth += 1;
     }
+    replay_buffer
 }
 
 /// Simple setup to let human player take either side in a game against the bot

@@ -3,7 +3,7 @@ from onnx import version_converter, shape_inference
 import os
 
 # Input path
-in_path = 'src/games/resources/model_55_joker.onnx'
+in_path = 'src/games/resources/model_11_joker.onnx'
 
 # Load the ONNX model
 model = onnx.load(in_path)

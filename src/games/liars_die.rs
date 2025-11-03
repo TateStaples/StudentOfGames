@@ -211,18 +211,20 @@ impl Game for LiarsDie {
 
 mod neural {
     use crate::games::liars_die::*;
-    use crate::games::resources::model_55_joker::Model;
-    use burn::backend::ndarray::{NdArray as B, NdArrayDevice as Device};
+    use crate::games::resources::model_11_joker::Model;
     use burn::tensor::Tensor;
     use std::cell::UnsafeCell;
     use std::sync::OnceLock;
+    use burn::backend::ndarray::{NdArray as B, NdArrayDevice as Device};
     // If you switch to WGPU later: use burn::backend::wgpu::{Wgpu as B, WgpuDevice as Device};
 
     // ----- constants inferred from your Python calc_args -----
     const SIDES: usize = 6;
-    const D1: usize = 5; // dice for P1
-    const D2: usize = 5; // dice for P2
-    const MAX_DICE_PER_PLAYER: usize = 5; // 5
+    const D1: usize = 1; // dice for P1
+    const D2: usize = 1; // dice for P2
+    const MAX_DICE_PER_PLAYER: usize = 1; // 5
+
+    // Calculated Hyperparameters
 
     const D_PUB_BASE: usize = (D1 + D2) * SIDES; // 60 calls (count-major, 10 counts × 6 faces)
     const LIE_ACTION: usize = D_PUB_BASE;        // 60
@@ -235,7 +237,7 @@ mod neural {
     const D_PRI: usize = D_PRI_BASE + 2;                    // 32 (two perspective bits)
 
     // ----- helpers -----
-    fn die_to_face_idx(d: &Die) -> usize {
+    fn die_to_face_idx(d: &Die) -> usize {  // TODO: their network assumes you can raise to betting ones
         match d {
             Die::One => 0,
             Die::Two => 1,
@@ -248,8 +250,7 @@ mod neural {
 
     // count-major action id: (count-1)*SIDES + (face-1)
     fn raise_action_id(face_idx: usize, count: usize) -> usize {
-        // count in 1..=D1+D2 (10), face_idx in 0..=5
-        (count - 1) * SIDES + face_idx
+        (count - 1) * SIDES + face_idx// count in 1..=D1+D2 (10), face_idx in 0..=5
     }
 
     // ----- encoders aligned to your Python layout -----
@@ -269,18 +270,19 @@ mod neural {
         for (i, a) in g.bet_history.iter().enumerate() {
             let player_seg = (i % 2) * D_PUB_PER_PLAYER;
             match a {
-                LiarsDieAction::Raise(face, count) => {
+                Raise(face, count) => {
                     let f = die_to_face_idx(face);
                     let c = (*count as usize).clamp(1, D1 + D2); // 1..10
                     let aid = raise_action_id(f, c);
+                    debug_assert!(aid < D_PUB_BASE);
                     if aid < D_PUB_BASE {
                         x[player_seg + aid] = 1.0;
                     }
                 }
-                LiarsDieAction::BullShit => {
+                BullShit => {
                     x[player_seg + LIE_ACTION] = 1.0;
                 }
-                LiarsDieAction::Deal(_, _) => {
+                Deal(_, _) => {
                     // Deals aren't represented in the public one-hot action space
                 }
             }

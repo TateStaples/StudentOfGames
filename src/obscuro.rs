@@ -15,7 +15,8 @@ pub struct Obscuro<G: Game> {
     pub expectation: Reward,
     total_updates: usize,
     info_sets: HashMap<G::Trace, InfoPtr<G::Action, G::Trace>>,
-    subgame_root: SubgameRoot<G>, 
+    subgame_root: SubgameRoot<G>,
+    solver: G::Solver,
     start_time: SystemTime,
 }
 
@@ -27,6 +28,10 @@ impl<G: Game> Obscuro<G> {
         // return purified best from the chosen expanded node; if missing, fall back to random on any infoset for player
         // println!("I see {:?}, out of {:?}", observation, self.info_sets.keys());
         self.info_sets[&observation].borrow().policy.purified()
+    }
+
+    pub fn inst_policy(&self, observation: G::Trace) -> Policy<G::Action> {
+        self.info_sets[&observation].borrow().policy.clone()
     }
     /// Given a observation, update you understanding of game state & strategy
     pub fn study_position(&mut self, observation: G::Trace, player: Player) {
@@ -48,19 +53,39 @@ impl<G: Game> Obscuro<G> {
     // ---------- Algo Setup --------- //
     /// Take in an observation, filter down to the new relevant tree (being careful about safe-replay)
     fn construct_subgame(&mut self, hist: G::Trace, player: Player) {  // TODO: split up construct subgame -> function is too long
-        // TODO: renormalize reach probabilities
+        // TODO: reset the game expectation
         debug_assert!(!matches!(player, Player::Chance));
-        // How does ord work for multiple players?
-        type PreResolver<G> = (Probability, Reward, Vec<History<G>>);
-        let other = player.other();
         // Find all root histories
+
+        let mut positions = self.pop_histories(hist.clone(), player);
+        Self::populate_histories(&mut positions, hist, player);
+
+        // Renormalize all the histories to sum to 1.0 (probability of being in this subgame)
+        let total_prob = positions.iter().map(|(_, (prob, _, _))| *prob).sum::<Probability>();
+        for (_, (_, _, hists)) in positions.iter_mut() {
+            for h in hists {
+                h.renormalize_reach(total_prob);
+            }
+        }
+        debug_assert!(!positions.is_empty());
+        // Initialize the Resolver Nodes: alt, chance node with Resolver policy
+
+        // Add Root with opponent policy to choose their info-state
+        let root = SubgameRoot::new(positions, player);
+        self.subgame_root = root;
+    }
+    fn pop_histories(&mut self, hist: G::Trace, player: Player) -> HashMap<G::Trace, PreResolver<G>> {
         // Filter down to the second cover of the trace -> split by opponent infostate (they are kinda doing it by post-action infostate)
         let root_histories = self.drain_root()
             .into_iter()
             .flat_map(|mut x| Self::drain_resolver(&mut x).into_iter())
             .collect();
         // println!("Root histories: {:?}", root_histories);
-        let covered = Self::k_cover(root_histories, hist.clone(), player, 3);
+        let mut covered = Self::k_cover(root_histories, hist.clone(), player, 3);
+        let new_possibility = covered.iter().map(|x| x.net_reach_prob()).sum::<Probability>();
+        for x in covered.iter_mut() {
+            x.renormalize_reach(new_possibility);
+        }
         // println!("Covered: {:?}", covered);
         let mut positions: HashMap<G::Trace, PreResolver<G>> = covered.
             into_iter()
@@ -84,9 +109,12 @@ impl<G: Game> Obscuro<G> {
                 }
                 map
             });
-
+        positions
+    }
+    fn populate_histories(positions: &mut HashMap<G::Trace, PreResolver<G>>, hist: G::Trace, player: Player) {
         let mut data_count = positions.len();
         let mut new_positions = G::sample_position(hist.clone());
+        let other = player.other();
 
         while data_count < MIN_INFO_SIZE {
             if let Some(g) = new_positions.next() {
@@ -110,19 +138,6 @@ impl<G: Game> Obscuro<G> {
                 break;
             }
         }
-        
-        let total_prob = positions.iter().map(|(_, (prob, _, _))| *prob).sum::<Probability>();
-        for (_, (_, _, hists)) in positions.iter_mut() {
-            for h in hists {
-                h.renormalize_reach(total_prob);
-            }
-        }
-        debug_assert!(!positions.is_empty());
-        // Initialize the Resolver Nodes: alt, chance node with Resolver policy
-
-        // Add Root with opponent policy to choose their info-state
-        let root = SubgameRoot::new(positions, player);
-        self.subgame_root = root;
     }
     /// Find all histories still believed to be possible up to order-k. Solved by iterating to fixed point
     /// k=1 => I believe we could be here
