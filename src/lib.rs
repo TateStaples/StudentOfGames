@@ -17,3 +17,6 @@ pub mod utils;
 pub mod history;
 pub mod obscuro;
 pub mod self_play;
+pub mod training;
+pub mod neural;
+pub mod neural_solver;

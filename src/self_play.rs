@@ -7,17 +7,18 @@ pub fn student_of_games<G: Game>(iterations: i32, greedy_depth: i32) -> Obscuro<
     let mut solver: Obscuro<G> = Obscuro::default();
     for iter in 0..iterations {
         println!("=== Iteration {} ===", iter);
-        let replay_buffer = self_play::<G>(greedy_depth);
+        let replay_buffer = self_play_with_solver::<G>(greedy_depth, &mut solver);
         solver.learn_from(replay_buffer);
         // solver.debug();
     }
     solver
 }
+
 /// Do self-learning by playing a game against yourself & updating your learning policies
-fn self_play<G: Game>(GREEDY_DEPTH: i32) -> ReplayBuffer<G> {
+/// This version reuses an existing solver for iterative improvement
+pub fn self_play_with_solver<G: Game>(GREEDY_DEPTH: i32, solver: &mut Obscuro<G>) -> ReplayBuffer<G> {
     // Setup
     let mut game = G::new();
-    let mut solver: Obscuro<G> = Obscuro::default();
     solver.study_position(game.trace(Player::P1), Player::P2);
     let mut depth = 0;
     let mut replay_buffer: ReplayBuffer<G> = vec![];
@@ -44,9 +45,8 @@ fn self_play<G: Game>(GREEDY_DEPTH: i32) -> ReplayBuffer<G> {
         let action = if depth > GREEDY_DEPTH {
             policy.purified()
         } else {
-            let exploring_policy = policy.avg_strategy.iter().map(|x| 0.5 * x + 1.0/(policy.actions.len() as Probability)).collect();
-            let exploring_action = policy.sample_from(exploring_policy);
-            exploring_action
+            let exploring_policy: Vec<Probability> = policy.avg_strategy.iter().map(|x| 0.5 * x + 1.0/(policy.actions.len() as Probability)).collect();
+            policy.sample_from(&exploring_policy)
         };
         println!("Bot({:?}) plays: {:?}", player, action);
         game = game.play(&action);

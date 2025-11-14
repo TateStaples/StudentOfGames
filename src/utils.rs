@@ -45,6 +45,35 @@ pub trait GameSolver<G: Game>: Default {
     }
     fn learn_from(&mut self, replay: ReplayBuffer<G>);
 } // Marker trait for solvers
+
+/// Default no-op solver for games without specialized neural networks
+#[derive(Default)]
+pub struct NoOpSolver;
+
+impl<G: Game> GameSolver<G> for NoOpSolver {
+    fn score_position(&self, _game: &G::State, _player: Player) -> Reward {
+        0.0  // Neutral evaluation
+    }
+    
+    fn guess_strategy(&self, _game: &G::State, _player: Player) -> Strategy {
+        vec![]  // Empty strategy - rely on CFR
+    }
+    
+    fn learn_from(&mut self, _replay: ReplayBuffer<G>) {
+        // No-op - purely CFR-based learning
+    }
+}
+
+/// Trait for encoding game states/traces as neural network inputs
+pub trait EncodeToTensor<B: burn::tensor::backend::Backend>: Sized {
+    /// Convert to a tensor representation for neural network input
+    /// Returns a 1D tensor of features
+    fn encode_tensor(&self, device: &B::Device, perspective: Player) -> burn::tensor::Tensor<B, 1>;
+    
+    /// Size of the input feature vector (not associated with backend)
+    const INPUT_SIZE: usize;
+}
+
 pub trait Game: Sized + Clone + Debug + Hash {
     /// Optional compressed representatino of game state for recovery
     type State: Clone;

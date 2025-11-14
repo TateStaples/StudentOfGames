@@ -72,6 +72,7 @@ impl LiarsDie {
 
 impl Game for LiarsDie {
     type State = Self;
+    type Solver = NoOpSolver;
     type Action = LiarsDieAction;
     type Trace = LiarsDieTrace;
 

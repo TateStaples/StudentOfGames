@@ -87,7 +87,7 @@ impl<G: Game> Obscuro<G> {
             x.renormalize_reach(new_possibility);
         }
         // println!("Covered: {:?}", covered);
-        let mut positions: HashMap<G::Trace, PreResolver<G>> = covered.
+        let positions: HashMap<G::Trace, PreResolver<G>> = covered.
             into_iter()
             .fold(HashMap::new(), |mut map, history| {
                 let trace = history.trace();
@@ -420,6 +420,16 @@ impl<G: Game> Obscuro<G> {
             }
         }
     }
+    
+    /// Learn from a replay buffer (for future neural network integration)
+    /// Currently this is a no-op since Obscuro learns online via CFR
+    pub fn learn_from(&mut self, _replay: ReplayBuffer<G>) {
+        // TODO: When neural networks are integrated, this will:
+        // 1. Convert replay buffer entries to training batches
+        // 2. Train the value/policy networks
+        // 3. Update the solver's neural network parameters
+        // For now, Obscuro learns purely through CFR during study_position
+    }
 }
 impl<G: Game> Default for Obscuro<G> {
     fn default() -> Self {
@@ -448,6 +458,7 @@ impl<G: Game> Default for Obscuro<G> {
             total_updates: 10,
             info_sets: HashMap::new(),
             subgame_root: root,
+            solver: G::Solver::default(),
             start_time: SystemTime::now(),
         }
     }

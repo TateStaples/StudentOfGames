@@ -40,6 +40,7 @@ pub struct Rps {
 
 impl Game for Rps {
     type State = Self;
+    type Solver = NoOpSolver;
     type Action = RpsAction;
     type Trace = RpsTrace;
 
@@ -121,7 +122,63 @@ impl Game for Rps {
                     s.play(&RpsAction::Paper),
                 ]).collect::<Vec<_>>().into_iter()
             }
-            _ => panic!("Not implemented")
+                        _ => panic!("Not implemented")
         }
     }
 }
+
+// Neural network encoding for RPS
+impl<B: burn::tensor::backend::Backend> crate::utils::EncodeToTensor<B> for Rps {
+    const INPUT_SIZE: usize = 12;  // 3 (stage) + 2 (player) + 3 (my action) + 3 (opp action) + 1 (to move)
+    
+    fn encode_tensor(&self, device: &B::Device, perspective: Player) -> burn::tensor::Tensor<B, 1> {
+        use burn::tensor::Tensor;
+        
+        let mut features = vec![0.0f32; 12];
+        
+        // Stage encoding (one-hot: 3 bits)
+        let stage = match (&self.p1, &self.p2) {
+            (None, _) => 0,
+            (Some(_), None) => 1,
+            (Some(_), Some(_)) => 2,
+        };
+        features[stage] = 1.0;
+        
+        // Player encoding (one-hot: 2 bits)
+        match perspective {
+            Player::P1 => features[3] = 1.0,
+            Player::P2 => features[4] = 1.0,
+            Player::Chance => {},
+        }
+        
+        // My action (if visible, one-hot: 3 bits)
+        let my_action = if perspective == Player::P1 { &self.p1 } else { &self.p2 };
+        if let Some(action) = my_action {
+            let idx = match action {
+                RpsAction::Rock => 5,
+                RpsAction::Paper => 6,
+                RpsAction::Scissors => 7,
+            };
+            features[idx] = 1.0;
+        }
+        
+        // Opponent's action (if visible, one-hot: 3 bits)
+        let opp_action = if perspective == Player::P1 { &self.p2 } else { &self.p1 };
+        if let Some(action) = opp_action {
+            let idx = match action {
+                RpsAction::Rock => 8,
+                RpsAction::Paper => 9,
+                RpsAction::Scissors => 10,
+            };
+            features[idx] = 1.0;
+        }
+        
+        // To move indicator (1 bit)
+        if self.to_move == perspective {
+            features[11] = 1.0;
+        }
+        
+        Tensor::from_floats(features.as_slice(), device)
+    }
+}
+

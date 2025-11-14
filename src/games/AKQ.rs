@@ -143,6 +143,7 @@ pub struct Akq {
 
 impl Game for Akq {
     type State = Self;
+    type Solver = NoOpSolver;
     type Action = AkqAction;
     type Trace  = AkqTrace;
 
