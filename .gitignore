@@ -6,3 +6,7 @@
 .idea
 Cargo.lock
 bayeselo.exe
+*.rlib
+*.so
+*.dylib
+*.dll
