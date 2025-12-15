@@ -9,11 +9,13 @@ pub mod cfr_plus;
 pub mod obscuro_algorithm;
 
 // Re-export main types for convenience
-pub use obscuro_core::{Game, Player, Policy, History, InfoSet, Reward, Probability};
+pub use obscuro_core::{
+    Game, History, InfoSet, Player, Policy, Probability, Reward, MIN_PROBABILITY,
+};
 pub use obscuro_algorithm::{Obscuro, ObscuroConfig, SearchStats};
 pub use safe_resolving::{ResolveAction, ResolverGadget, SubgameRoot};
-pub use subgame_solving::{k_cover, construct_subgame};
-pub use cfr_plus::{cfr_iteration, apply_policy_updates};
+pub use subgame_solving::{construct_subgame, k_cover};
+pub use cfr_plus::{apply_policy_updates, cfr_iteration};
 
 #[cfg(test)]
 mod tests {

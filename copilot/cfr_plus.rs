@@ -34,7 +34,8 @@ pub fn cfr_iteration<G: Game>(
             .unwrap_or(0.0);
 
         // For now, assume full entry (p_enter = 1.0)
-        // In full implementation, this would be resolver.prob_enter()
+        // TODO: In a complete implementation, this would use resolver.prob_enter()
+        // For educational purposes, we simplify to always entering the subgame
         let p_enter = 1.0;
 
         let mut enter_value = 0.0;

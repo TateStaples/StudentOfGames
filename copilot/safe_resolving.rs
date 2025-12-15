@@ -60,12 +60,10 @@ impl<G: Game> ResolverGadget<G> {
 
         // Create resolver policy (Enter vs Skip)
         let actions = vec![ResolveAction::Enter, ResolveAction::Skip];
-        let mut resolver_policy = Policy::new(actions, player.other());
+        let resolver_policy = Policy::new(actions, player.other());
 
-        // Initialize Skip with the alternative value as regret
-        resolver_policy
-            .cumulative_regrets
-            .insert(ResolveAction::Skip, alt_value);
+        // Note: Alternative value will be used in CFR iteration as the Skip payoff
+        // Initial regrets start at 0.0 as per standard CFR
 
         ResolverGadget {
             resolver_policy,

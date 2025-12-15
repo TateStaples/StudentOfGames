@@ -15,6 +15,9 @@ pub type Reward = f64;
 /// Probability value [0.0, 1.0]
 pub type Probability = f64;
 
+/// Minimum probability threshold to avoid numerical issues
+pub const MIN_PROBABILITY: f64 = 1e-12;
+
 /// Player identifier
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum Player {
@@ -368,7 +371,7 @@ impl<G: Game> History<G> {
             History::Terminal { reach_probs, .. }
             | History::Visited { reach_probs, .. }
             | History::Expanded { reach_probs, .. } => {
-                reach_probs.values().product::<Probability>().max(1e-12)
+                reach_probs.values().product::<Probability>().max(MIN_PROBABILITY)
             }
         }
     }
