@@ -169,96 +169,115 @@ impl<G: Game> Obscuro<G> {
 
     /// Perform one expansion step (GT-CFR tree growth)
     fn expansion_step(&mut self, player: Player) {
-        if let Some(ref mut subgame) = self.subgame_root {
-            // Sample a history to expand
-            if let Some((resolver_idx, history_idx)) = subgame.sample_history() {
-                let history = subgame.get_history_mut(resolver_idx, history_idx);
+        // Get the indices without complex borrowing
+        let indices = if let Some(ref subgame) = self.subgame_root {
+            subgame.sample_history()
+        } else {
+            None
+        };
 
-                // Expand using exploration/exploitation
-                self.expand_history(history, player);
+        if let Some((resolver_idx, history_idx)) = indices {
+            // Temporarily take ownership of subgame_root
+            if let Some(mut subgame) = self.subgame_root.take() {
+                let history = subgame.get_history_mut(resolver_idx, history_idx);
+                
+                // Expand the history
+                Self::expand_history_static(history, player, &mut self.info_sets);
+                
+                // Restore subgame_root
+                self.subgame_root = Some(subgame);
             }
         }
     }
 
-    /// Expand a single history node
-    fn expand_history(&mut self, history: &mut History<G>, target_player: Player) {
-        // Navigate to a leaf using exploration/exploitation
-        let mut current = history;
+    /// Static version of expand_history that doesn't borrow self
+    fn expand_history_static(
+        mut history: &mut History<G>,
+        target_player: Player,
+        info_sets: &mut HashMap<G::Trace, Rc<RefCell<InfoSet<G::Action, G::Trace>>>>,
+    ) {
+        // Navigate to leaf
+        loop {
+            match history {
+                History::Expanded { game, player, children, .. } => {
+                    let trace = game.trace(*player);
+                    let game_clone = game.clone();
+                    let player_clone = *player;
 
-        while let History::Expanded {
-            game,
-            player,
-            children,
-            ..
-        } = current
-        {
-            let trace = game.trace(*player);
+                    // Get or create info set
+                    let info_set = info_sets
+                        .entry(trace.clone())
+                        .or_insert_with(|| {
+                            let actions = game_clone.legal_actions();
+                            Rc::new(RefCell::new(InfoSet::new(trace, actions, player_clone)))
+                        })
+                        .clone();
 
-            // Get or create info set
-            let info_set = self
-                .info_sets
-                .entry(trace.clone())
-                .or_insert_with(|| {
-                    let actions = game.legal_actions();
-                    Rc::new(RefCell::new(InfoSet::new(trace, actions, *player)))
-                })
-                .clone();
+                    let mut info = info_set.borrow_mut();
 
-            let mut info = info_set.borrow_mut();
+                    // Select action
+                    let action = if player_clone == target_player {
+                        info.policy.select_exploration()
+                    } else {
+                        info.policy.best_action()
+                    };
 
-            // Select action based on whether this is target player
-            let action = if *player == target_player {
-                // Explore
-                info.policy.select_exploration()
-            } else {
-                // Exploit
-                info.policy.best_action()
-            };
+                    info.policy.record_exploration(&action);
+                    drop(info);
 
-            // Record exploration
-            info.policy.record_exploration(&action);
+                    // Find child and continue
+                    let mut found_child = None;
+                    for (a, child) in children.iter_mut() {
+                        if a == &action {
+                            found_child = Some(child);
+                            break;
+                        }
+                    }
 
-            drop(info);
+                    match found_child {
+                        Some(child) => history = child,
+                        None => return,
+                    }
+                }
+                
+                History::Visited { game, .. } => {
+                    // Expand this node
+                    let game_clone = game.clone();
+                    let player = game_clone.active_player();
+                    let actions = game_clone.legal_actions();
+                    let trace = game_clone.trace(player);
 
-            // Find child with this action
-            if let Some((_, child)) = children.iter_mut().find(|(a, _)| a == &action) {
-                current = child;
-            } else {
-                break;
+                    // Create info set
+                    let _info_set = info_sets
+                        .entry(trace.clone())
+                        .or_insert_with(|| {
+                            Rc::new(RefCell::new(InfoSet::new(trace, actions.clone(), player)))
+                        })
+                        .clone();
+
+                    // Create children
+                    let children: Vec<(G::Action, History<G>)> = actions
+                        .into_iter()
+                        .map(|action| {
+                            let new_game = game_clone.apply_action(&action);
+                            (action, History::new(new_game))
+                        })
+                        .collect();
+
+                    // Replace with Expanded
+                    *history = History::Expanded {
+                        game: game_clone,
+                        player,
+                        children,
+                        reach_probs: HashMap::new(),
+                    };
+                    return;
+                }
+                
+                History::Terminal { .. } => {
+                    return;
+                }
             }
-        }
-
-        // Expand if we're at a visited node
-        if let History::Visited { game, .. } = current {
-            let player = game.active_player();
-            let actions = game.legal_actions();
-            let trace = game.trace(player);
-
-            // Create info set for this position
-            let info_set = self
-                .info_sets
-                .entry(trace.clone())
-                .or_insert_with(|| {
-                    Rc::new(RefCell::new(InfoSet::new(trace, actions.clone(), player)))
-                })
-                .clone();
-
-            // Create children
-            let children: Vec<(G::Action, History<G>)> = actions
-                .into_iter()
-                .map(|action| {
-                    let new_game = game.apply_action(&action);
-                    (action, History::new(new_game))
-                })
-                .collect();
-
-            // Replace Visited with Expanded
-            *current = History::Expanded {
-                game: game.clone(),
-                player,
-                children,
-                reach_probs: HashMap::new(),
-            };
         }
     }
 
@@ -281,7 +300,7 @@ impl<G: Game> Obscuro<G> {
     }
 
     /// Select action to play (Step 5)
-    fn select_action(&self, observation: G::Trace, player: Player) -> G::Action {
+    fn select_action(&self, observation: G::Trace, _player: Player) -> G::Action {
         // Get info set for current observation
         if let Some(info_set) = self.info_sets.get(&observation) {
             let info = info_set.borrow();

@@ -4,9 +4,7 @@
 // exploitability guarantees even when solving approximate subgames.
 
 use crate::obscuro_core::*;
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Rc;
 
 // ============================================================================
 // Resolver Actions
@@ -139,7 +137,7 @@ impl<G: Game> SubgameRoot<G> {
 
         // Create maxmargin policy over resolver indices
         let indices: Vec<usize> = (0..resolvers.len()).collect();
-        let maxmargin_policy = Policy::new(indices, player);
+        let mut maxmargin_policy = Policy::new(indices, player);
 
         // Initialize cumulative strategy with prior probabilities
         for (idx, resolver) in resolvers.iter().enumerate() {

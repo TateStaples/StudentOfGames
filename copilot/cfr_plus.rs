@@ -226,6 +226,7 @@ pub fn apply_policy_updates<G: Game>(
 /// - Predicting future regrets based on recent history
 /// - Alternating between regret matching and best response
 /// - Linear averaging of strategies
+#[allow(dead_code)]
 pub struct PredictiveCFR {
     /// History of regrets for prediction
     regret_history: Vec<HashMap<String, f64>>,
