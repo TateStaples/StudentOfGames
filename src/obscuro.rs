@@ -278,8 +278,7 @@ impl<G: Game> Obscuro<G> {
         let resolver_dist = root_policy.inst_policy();
         for (resolver_idx, (resolver_gadget, r_prob)) in children.iter_mut().zip(resolver_dist).enumerate() {
             let ResolverGadget { resolver, alt, children: histories, info, prior_probability } = resolver_gadget;
-            let _p_enter = resolver.p_exploit(&ENTER);
-            let p_enter = 1.0;
+            let p_enter = resolver.p_exploit(&ENTER);
             let mut enter_value = 0.0;
             let distribution = info.policy.inst_policy();
             for (_, (history, sample_chance)) in histories.iter_mut().zip(distribution.iter()).enumerate() {
