@@ -112,19 +112,30 @@ where
                 while start_time.elapsed().unwrap_or(Duration::from_secs(0))
                     < Duration::from_millis((SOLVE_TIME_SECS * 1000.0) as u64)
                 {
-                    // Perform expansion work
-                    // Note: In a full implementation, this would do actual tree expansion
-                    // For now, we demonstrate the threading structure
+                    // Note: This is a simplified parallel implementation
+                    // A full implementation would need:
+                    // 1. Proper tree expansion logic coordinated across threads
+                    // 2. CFR iteration with thread-safe policy updates
+                    // 3. Safe resolving and subgame construction
+                    // 
+                    // Current implementation demonstrates the threading structure
+                    // and synchronization primitives required for parallelization.
                     {
                         let _info_sets_read = info_sets.read().unwrap();
-                        // Expansion logic would go here
+                        // TODO: Actual expansion logic would:
+                        // - Select nodes to expand based on UCB/explore policy
+                        // - Create new history nodes
+                        // - Update info_sets with new policies
                         local_expansions += 1;
                     }
                     
                     // Perform CFR solving work
                     for _ in 0..10 {
                         let _info_sets_read = info_sets.read().unwrap();
-                        // CFR iteration logic would go here
+                        // TODO: Actual CFR logic would:
+                        // - Compute counterfactual values
+                        // - Update regret accumulators
+                        // - Update average strategies
                         local_solves += 1;
                     }
                     
