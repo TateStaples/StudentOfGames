@@ -17,4 +17,6 @@ pub mod utils;
 pub mod history;
 pub mod obscuro;
 pub mod obscuro_threaded;
+pub mod obscuro_parallel;
+pub mod neural_demo;
 pub mod self_play;

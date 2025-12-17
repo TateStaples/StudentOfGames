@@ -409,7 +409,7 @@ impl<G: Game> Obscuro<G> {
         j0
     }
 
-    fn size(&self) -> usize {
+    pub fn size(&self) -> usize {
         self.subgame_root.children.iter().map(|x| {
             x.children.iter().map(|h| h.size()).sum::<usize>()
         }).sum::<usize>()

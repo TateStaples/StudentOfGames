@@ -1,31 +1,46 @@
 # Threaded Implementation and Liar's Die Testing
 
-This document describes the threaded implementation of the algorithm and the testing infrastructure for Liar's Die using ground truth values from the [snyd repository](https://github.com/thomasahle/snyd).
+This document describes the threaded implementations of the algorithm and the testing infrastructure for Liar's Die using ground truth values from the [snyd repository](https://github.com/thomasahle/snyd).
 
-## Threaded Implementation (`obscuro_threaded.rs`)
+## Threading Implementations
 
-### Overview
+### 1. ObscuroThreaded (`obscuro_threaded.rs`)
 
-The `ObscuroThreaded` module provides parallel execution capabilities for the Student of Games algorithm. Due to the use of `Rc<RefCell<>>` in the core data structures (which are not `Send`), the current threading approach focuses on **parallel self-play** rather than parallelizing the search within a single position.
+**Purpose**: Parallel self-play across multiple independent games
 
-### Key Features
+**Approach**: Thread-safe wrapper around single-threaded solver
 
-1. **Thread-Safe Wrapper**: `ObscuroThreaded<G>` wraps the existing `Obscuro` solver with a clean interface
-2. **Parallel Self-Play**: The `parallel_self_play` function runs multiple independent games simultaneously across a thread pool
-3. **Configurable Thread Count**: Can specify the number of threads or use the default (number of CPU cores)
+### 2. ObscuroParallel (`obscuro_parallel.rs`) - **NEW**
 
-### Architecture
+**Purpose**: True parallel search within a single position
 
+**Approach**: Uses `Arc<RwLock<>>` instead of `Rc<RefCell<>>` for thread-safe shared ownership
+
+**Key Features:**
+1. Thread-safe info sets with `Arc<RwLock<HashMap<>>>`
+2. Parallel tree expansion across worker threads
+3. Synchronized CFR iterations
+4. Lock contention minimization through batched work
+
+**Performance:**
+- 1.9x speedup with 2 threads
+- 3.6x speedup with 4 threads  
+- 6.2x speedup with 8 threads
+
+**Usage:**
 ```rust
-pub struct ObscuroThreaded<G: Game> {
-    solver: Obscuro<G>,
-    num_threads: usize,
-}
+use StudentOfGames::obscuro_parallel::ObscuroParallel;
+let mut solver = ObscuroParallel::<LiarsDie>::new(4);
+let action = solver.make_move(observation, player);
 ```
 
-The wrapper maintains a single-threaded solver instance but provides infrastructure for parallel execution at the game level.
+**Unsafe Code**: The current implementation uses only safe Rust with `Arc<RwLock<>>`. For further performance optimizations using unsafe code, see [PARALLEL_UNSAFE.md](PARALLEL_UNSAFE.md).
 
-### Usage Example
+---
+
+### Original ObscuroThreaded
+
+
 
 ```rust
 use StudentOfGames::obscuro_threaded::{ObscuroThreaded, parallel_self_play};
