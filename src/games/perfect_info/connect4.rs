@@ -182,6 +182,7 @@ impl Connect4 {
 impl Game for Connect4 {
     type Action = u8;
     type State = Self;
+    type Solver = DummySolver;
     type Trace = Self;
 
     fn new() -> Self {

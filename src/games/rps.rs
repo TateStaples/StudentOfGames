@@ -40,7 +40,7 @@ pub struct Rps {
 
 impl Game for Rps {
     type State = Self;
-    type Solver = NoOpSolver;
+    type Solver = DummySolver;
     type Action = RpsAction;
     type Trace = RpsTrace;
 
