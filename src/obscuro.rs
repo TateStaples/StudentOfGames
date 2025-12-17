@@ -123,6 +123,7 @@ impl<G: Game> Obscuro<G> {
     
     /// Compute gift value ĝ(J) = Σ [u_cf(x,y; J'a') - u_cf(x,y; J')]_+
     /// This represents the advantage gained from opponent mistakes leading to J
+    /// Note: For very deep game trees, consider memoization to avoid redundant computation
     fn compute_gift_value(history: &History<G>, player: Player) -> Reward {
         match history {
             History::Terminal { .. } | History::Visited { .. } => 0.0,
