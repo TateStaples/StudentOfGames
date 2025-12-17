@@ -13,6 +13,9 @@ pub fn student_of_games<G: Game>(iterations: i32, greedy_depth: i32) -> Obscuro<
     }
     solver
 }
+/// Exploration weight for mixing exploit and uniform random policies during self-play
+const EXPLORATION_WEIGHT: f64 = 0.5;
+
 /// Do self-learning by playing a game against yourself & updating your learning policies
 fn self_play<G: Game>(GREEDY_DEPTH: i32) -> ReplayBuffer<G> {
     // Setup
@@ -44,7 +47,7 @@ fn self_play<G: Game>(GREEDY_DEPTH: i32) -> ReplayBuffer<G> {
         let action = if depth > GREEDY_DEPTH {
             policy.purified()
         } else {
-            let exploring_policy: Vec<Probability> = policy.avg_strategy.iter().map(|x| 0.5 * x + 1.0/(policy.actions.len() as Probability)).collect();
+            let exploring_policy: Vec<Probability> = policy.avg_strategy.iter().map(|x| EXPLORATION_WEIGHT * x + 1.0/(policy.actions.len() as Probability)).collect();
             let exploring_action = policy.sample_from(&exploring_policy);
             exploring_action
         };

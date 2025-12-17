@@ -71,7 +71,6 @@ where
 {
     use std::sync::{Arc, Mutex};
     use std::thread;
-    use rand::seq::IndexedRandom;
 
     let results = Arc::new(Mutex::new(Vec::new()));
     let games_remaining = Arc::new(Mutex::new(num_games));
@@ -82,6 +81,9 @@ where
         let games_remaining_clone = Arc::clone(&games_remaining);
 
         let handle = thread::spawn(move || {
+            // Create thread-local RNG for better performance
+            let mut rng = rand::rng();
+
             loop {
                 // Check if there are games remaining
                 let should_continue = {
@@ -107,8 +109,9 @@ where
                     
                     match player {
                         Player::Chance => {
+                            use rand::seq::IndexedRandom;
                             let actions = game.available_actions();
-                            let action = actions.choose(&mut rand::rng()).unwrap().clone();
+                            let action = actions.choose(&mut rng).unwrap().clone();
                             game = game.play(&action);
                         }
                         p => {
