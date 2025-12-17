@@ -1,0 +1,2224 @@
+General search techniques without common knowledge
+for imperfect-information games, and application to
+superhuman Fog of War chess
+Brian Hu Zhang, Tuomas Sandholm
+
+arXiv:2506.01242v1 [cs.GT] 2 Jun 2025
+
+Computer Science Department, Carnegie Mellon University, Pittsburgh, PA 15213
+
+{bhzhang, sandholm}@cs.cmu.edu
+June 9, 2025
+Abstract
+Since the advent of AI, games have served as progress benchmarks. Meanwhile, imperfect-information
+variants of chess have existed for over a century, present extreme challenges, and have been the focus
+of significant AI research. Beyond calculation needed in regular chess, they require reasoning about
+information gathering, the opponent’s knowledge, signaling, etc. The most popular variant, Fog of War
+(FoW) chess (aka. dark chess) is a recognized challenge problem in AI after superhuman performance was
+reached in no-limit Texas hold’em poker. We present Obscuro, the first superhuman AI for FoW chess.
+It introduces advances to search in imperfect-information games, enabling strong, scalable reasoning.
+Experiments against the prior state-of-the-art AI and human players—including the world’s best—show
+that Obscuro is significantly stronger. FoW chess is the largest (by amount of imperfect information)
+turn-based game in which superhuman performance has been achieved and the largest game in which
+imperfect-information search has been successfully applied.
+
+1
+
+Introduction
+
+The concept of breaking a large problem into subproblems and searching through them individually has been
+with us since time immemorial. In artificial intelligence (AI), search is a core capability that is required
+for strong performance in many applications. In game solving, this commonly takes the form of subgame
+solving. In games of perfect information, subgame solving is conceptually straightforward, because every new
+state induces a subgame that can be analyzed independently of the rest of the game. Subgame solving in
+perfect-information games is as old as computers themselves: Alan Turing and David Champernowne wrote a
+chess engine Turochamp in 1948 using minimax search and a hand-crafted function for evaluating nodes [24].
+In landmark results, subgame solving has played a key role in reaching superhuman level in chess [13] and
+go [35, 36, 37].
+In contrast to such perfect-information games, most real-world settings are imperfect-information games. These
+include negotiation, business, finance, and defense applications. Thus it is crucial for the field of AI to develop
+strong techniques for imperfect-information games. Such games involve additional challenges not present in
+perfect-information games. For example, AIs for imperfect-information games might need to randomize their
+actions to prevent the opponent from learning too much information, and a player’s optimal action in a state
+can depend on that same player’s action in a totally different state. Therefore, subgame solving in imperfectinformation games is drastically more difficult. Methods for real-time subgame solving in imperfect-information
+games have only been developed relatively recently [21, 22, 41, 18, 12, 28, 7, 29, 8, 9, 11, 38], and they were
+key to achieving superhuman performance in no-limit Texas hold’em poker [8, 9]. Strong AI performance has
+also been achieved in a few imperfect-information zero-sum games that are even larger [40, 5, 31]. However,
+these were accomplished with learning alone and did not enjoy the further performance benefits that search
+
+1
+
+could bring, due largely to the lack of scalability of subgame solving algorithms for imperfect-information
+games larger than poker.
+In this paper we present dramatically more scalable general-purpose subgame solving techniques for imperfectinformation games. We used these techniques to create Obscuro, an AI that achieved superhuman performance
+in Fog of War (FoW) chess (aka. dark chess), the most popular variant of imperfect-information chess. Over
+120 games against humans of varying skill levels—including the #1-ranked human—and 1,000 games against
+the previous state-of-the-art FoW chess AI [42], we conclusively demonstrate that Obscuro is stronger than
+any other current agent—human or artificial—for FoW chess. FoW chess is now the largest (measured by
+amount of imperfect information) turn-based game in which superhuman performance has been achieved and
+the largest game in which imperfect-information search techniques have been successfully applied.
+In the next section we will introduce the game and discuss the challenges that players in these types of games
+must tackle. In the section after that, we present our AI agent Obscuro and the algorithms therein. In the
+section after that, we present our experiments. Finally we present conclusions and future research directions.
+Full details of the algorithms and additional experiments are included in the supplementary material.
+
+2
+
+Challenges in imperfect-information games such as Fog of War
+chess
+
+Imperfect-information versions of chess have captured the imagination of chess players and scientists alike for
+over a century. To our knowledge, the first imperfect-information version of chess was Kriegspiel, invented in
+1899 and based on the earlier game Kriegsspiel, a war game used by the Prussian army in the early 19th
+century for training [32]. In the modern day, there are multiple imperfect-information variants of chess,
+including Kriegspiel, reconnaissance blind chess (RBC), and Fog of War (FoW) chess.1 Imperfect-information
+chess is a recognized challenge problem in AI. Although there has been AI research in Kriegspiel [30, 33, 14]
+and RBC [20], strong performance has not been achieved in Kriegspiel, and RBC is not played competitively
+by humans. By comparison, FoW chess has surged in popularity due to its implementation on the major
+chess website chess.com, and strong human experts have emerged among thousands of active players.2 It is
+the most popular variant of imperfect-information chess by far, and strong human experts exist who can
+serve as challenging benchmarks of progress.
+FoW chess presents a unique combination of challenges that did not exist in prior superhuman AI milestones.3
+First, chess itself is a highly tactical game often requiring careful lookahead, and FoW chess is no different:
+there are often positions where one player has perfect or near-perfect information and can execute a sequence
+of moves that results in an advantage. Thus, a strong agent must have solid lookahead capability. Lookahead
+in other games is usually accomplished by subgame solving. Thus it would be desirable to be able to conduct
+subgame solving in FoW chess too.
+Second, private information is rapidly gained and lost. It is possible for the size of a player’s information set
+(infoset)—i.e., set of indistinguishable positions given a player’s observations—to rapidly increase and then
+decrease again, for example, from hundreds up to millions and then back down to hundreds, in a matter of a
+few moves. Thus, a strong agent must have the ability to reason about this rapidly-changing information.
+Third, a strong agent must at least somewhat play a mixed strategy—that is, it must randomize its actions.
+Otherwise, an adversary who knows the strategy, or has learned the strategy from past observation, can
+easily exploit that knowledge.
+Finally, in games like FoW chess, reasoning about common knowledge is difficult. This is a key challenge
+because most algorithms for subgame solving—including those that led to breakthroughs in no-limit Texas
+hold’em poker—rely on the ability to reason about common knowledge, or often even the ability to enumerate
+the entire common-knowledge set—that is, the smallest set of histories C with the property that it is common
+1 Despite its similar name, Chinese dark chess has no private information, and thus does not require the types of reasoning
+that are required in FoW chess.
+2 As of April 2025, the Fog of War chess leaderboard on chess.com [3] listed 19,150 active players.
+3 The complete rules of FoW chess can be found in the supplementary materials.
+
+2
+
+knowledge that the true history lies in C [8, 9]. So, to prepare for solving a subgame, prior algorithms need
+to reason about what the agent knows about what the opponent knows about what the agent knows, and
+so on. This need can dramatically expand the set of states that need to be incorporated into the subgame
+solving algorithm, making such methods impractical for games much larger than no-limit Texas hold’em.
+For example, consider the two FoW chess positions in Figure 1.4 Although seemingly completely distinct, it
+is possible to show (see supplementary material) that these two positions are connected by no fewer than nine
+levels of “I think that you think that...” reasoning. Prior techniques would require the ability to generate
+this complex connection before starting subgame solving from either of the two positions.
+
+rmblkans
+7
+opo0opZp
+6
+0Z0Z0Z0Z
+5
+Z0ZpZ0o0
+4
+0Z0Z0Z0Z
+3
+Z0M0Z0ZN
+2
+POPOPOPO
+1
+S0AQJBZR
+
+rmbZkans
+opopZpop
+6
+0Z0Z0Z0Z
+5
+Z0Z0o0Z0
+4
+0Z0Z0Z0l
+3
+Z0Z0ZNZP
+2
+POPOPOPZ
+1
+SNAQJBZR
+
+8
+
+a
+
+b
+
+c
+
+d
+
+e
+
+f
+
+g
+
+8
+7
+
+h
+
+a
+
+A
+
+b
+
+c
+
+d
+
+e
+
+f
+
+g
+
+h
+
+B
+
+Figure 1: Two FoW chess positions in the same common-knowledge set. (A) position after moves 1. Nc3
+g5 2. Nh3 d5; (B) position after moves 1. Nf3 e5 2. h3 Qh4. The boxed squares mark pieces visible to
+the opponent.
+Such intricacies make it difficult to reason about common knowledge efficiently. For example, commonknowledge sets in FoW chess can quickly grow prohibitively large, so they cannot be held directly in
+memory [42]. In FoW chess, individual infosets often have size as large as 106 and can have size 109 .
+Common-knowledge sets can have size 1018 —far too large to be enumerated in reasonable time or space
+during search.5 Perhaps even more troubling is the fact that it is not even clear that it is possible to efficiently
+decide whether two histories can be distinguished by common knowledge, so in some sense reasoning about
+common knowledge may require enumerating the common-knowledge set in the worst case.
+This is in sharp contrast to poker, which has special structure that has driven the success of past efforts in
+that game. First, at least in two-player
+(heads-up)
+Texas hold’em poker, common-knowledge sets are not
+ 50
+
+6
+very large. They have size at most 52
+2
+2 ≈ 1.6 × 10 , and can thus easily be held in memory. Moreover,
+thanks to poker-specific optimizations [23], subgame solving in poker can be implemented in such a way
+that its complexity depends not on the size of the common-knowledge set but merely on the size of the
+infoset, enabling feasible subgame solving even when the common-knowledge sets are large, as is the case in
+multi-player poker.6 In more general games where these domain-specific techniques do not apply—such as
+FoW chess—the complexity of traditional subgame-solving techniques for imperfect-information games would
+scale with the size of the common-knowledge set, which in our case renders such techniques totally infeasible.
+4 The sequence of moves in the figure is purely for the purpose of illustrating common knowledge, and does not represent
+strong play. For example, Obscuro never plays 1... g5 or 2... Qh4.
+5 Detailed calculations for these lower bounds can be found in the supplementary materials.
+6 Specifically, Pluribus [9] would not have been feasible without these poker-specific optimizations.
+
+3
+
+3
+
+Description of our AI agent Obscuro and the new algorithms
+therein
+
+The technical innovations of Obscuro are in its search algorithms. At a high level, they operate as follows. At
+all times, the program maintains the full set P of possible positions7 given the observations that it has seen
+so far in the game, as well as a partial game tree Γ̂ consisting of its calculations from the previous move. At
+the beginning of the game, P contains only the starting position s0 , and Γ̂ consists of a single node s0 , since
+the program has done no calculation. Although P is small enough to fit in memory (usually |P | ≤ 106 ), it is
+too large to feasibly allow nontrivial reasoning about every single position in P on every move. Therefore,
+the program instead samples a small subset I ⊆ P at random, whose size is no more than a few hundred
+positions.
+Given a subset I, the program at a high level executes the following steps.
+1. Construct an imperfect-information subgame Γ incorporating the saved computation from the previous
+move (Γ̂), as well as the positions in the sampled subset I.
+2. Compute an (approximately) optimal strategy profile (i.e., an approximate Nash equilibrium) of Γ.
+3. Use the Nash equilibrium to expand the game tree Γ.
+4. Repeat the above two steps until a time budget is exceeded.
+5. Select a move.
+We now elaborate on each step individually. Full detail can be found in the supplementary material.
+
+3.1
+
+Step 1: Generating the initial game tree at the beginning of a turn
+
+The imperfect-information subgame Γ is constructed from the old game tree Γ̂ and the sampled additional
+positions s ∈ I according to a new algorithm which we call knowledge-limited unfrozen subgame solving
+(KLUSS). It is more effective than the knowledge-limited subgame solving (KLSS) algorithm of Zhang and
+Sandholm [42] (a comparison is presented in the supplementary material). At a high level, KLSS and KLUSS
+address the issue of reasoning about common knowledge by assuming that sufficiently high-order knowledge
+is essentially irrelevant to game play: if there is a position s in the old tree Γ̂ such that we know that the
+opponent knows that we know that s is not the true state, we remove s from Γ as it is assumed to be irrelevant.
+As an example, consider the game in Figure 2. There are two players, ▲ and ▼. Suppose that we are ▲, and
+we have arrived at the circled node (which is alone in its infoset, i.e., at this node, ▲ has perfect information).
+
+Figure 2: An example game tree, to illustrate KLUSS. The box (□) is a chance node. Dotted lines connect
+nodes in the same infoset.
+The infosets (dotted lines) define a connectivity graph G among the five nodes in that layer of the tree: two
+nodes u and v are connected if there is an infoset connecting any descendant of u (including u itself) to any
+descendant of v (including v itself). The nodes in that layer are labeled according to their distance from the
+circled node; the node labeled ∗ is not connected. Distance corresponds to order of knowledge: if the true
+7 A position describes where pieces are as well as the castling and en passant rights.
+
+4
+
+node is the circled node, then the distance is the smallest integer k for which the statement
+everyone knows that everyone knows that ... everyone knows that the true node is not u
+{z
+}
+|
+k repetitions
+
+is false. Thus the shaded red region corresponds to nodes that will be removed: everyone knows that these
+nodes are not the true nodes. This allows the game tree to be kept to a manageable size, even when the
+common-knowledge set (which the program never computes or uses) is large.
+Our approach has two important properties. First, it enables the agent to reason about the opponent’s
+information in a more powerful way than assuming something pessimistic, such as the opponent having
+perfect information [30, 33]. This allows behavior such as bluffing, which is important to strong play. Second,
+it accomplishes this while essentially only examining states s that are relevant in the sense that, as far as
+our agent knows, the opponent might believe that s is the true state. This ensures that, even when the
+common-knowledge set is large and poorly structured (e.g., even when the vast majority of states in the
+common-knowledge set are irrelevant), subgame solving is still possible and effective.8
+The difference between KLUSS and KLSS is that in KLSS, the strategy for Node 1 in Figure 2 (and more
+generally all ▲-nodes at distance 1 and their descendants) is frozen to that node’s strategy from the previous
+move. In KLUSS, it is unfrozen and will be game-theoretically optimized together with the rest of the
+subgame that is not removed (i.e., not red).
+
+3.2
+
+Step 2: Equilibrium computation
+
+The remaining steps are inspired by the growing-tree counterfactual regret minimization (GT-CFR) algorithm [34]: a game tree Γ is simultaneously solved using an iterative equilibrium-finding algorithm and
+expanded using an expansion policy.
+For equilibrium finding we use a state-of-the-art algorithm, predictive CFR+ (PCFR+) [16]. PCFR+ is an
+iterative, anytime algorithm for solving imperfect-information games, that can handle the fact that our game
+tree Γ is changing over time. At all times t, PCFR+ maintains a profile (xt , y t ), where xt is our strategy and
+y t is the opponent’s strategy.
+PCFR+ has P
+only been P
+proven to converge in average strategies. That is, the empirical strategy profile
+t
+T
+(x̄t , ȳ t ) := ( 1t s=1 xs , 1t s=1 y s ) converges to Nash equilibrium as t → ∞. However, instead of computing
+the empirical average strategy, we circumvent this step and maintain only the last iterate (xt , y t ). There are
+several reasons for this choice, which are detailed in the supplementary material.
+
+3.3
+
+Step 3: Expanding the game tree
+
+Nodes are selected for expansion by using carefully-designed expansion policies that balance exploration and
+exploitation. Our program chooses a node to expand by the following process. Fix one player to be the
+exploring player. (The choice of which player is exploring alternates: on odd-numbered iterations, P1 is the
+exploring player; on even-numbered iterations, P2 is the exploring player.) For this exposition, we will take P1
+to be the exploring player. The non-exploring player will play according to its current strategy as computed
+by PCFR+, in this case y t . The exploring player will play a perturbed version x̃t of its current strategy xt .
+The strategy x̃t is designed to balance between exploitation and exploration. Exploitation here means playing
+actions with high possible reward, that is, actions that have positive probability in xt . Exploration means
+assigning positive probability to every possible action, to hedge against the possibility that the current tree
+incorrectly estimates the value of the action due to lacking search depth. For this, we use a method based on
+the polynomial upper confidence bounds for trees (PUCT) algorithm [35]. Finally, a leaf node of the current
+tree Γ is selected for expansion according to the strategy profile (x̃t , y t ).
+One major difference between our algorithm and the GT-CFR algorithm lies in having only one player use
+the exploring strategy x̃t , rather than both. Intuitively, this remains sound, because tree nodes that neither
+8 KLSS and KLUSS are not always game-theoretically sound in theory because some of the removed (red in the figure) part
+of the game tree could be relevant to the decision, but they are often sound in practice [42, 27]. They can be viewed as a
+computationally feasible alternative to traditional game-theoretically sound subgame solving.
+
+5
+
+player plays to reach are irrelevant to equilibrium play. Thus, allowing one player to play directly from their
+equilibrium strategy (here, y t ) allows the tree expansion to be more focused.
+Once a leaf node z is chosen by the above process, its children are evaluated by a node heuristic and added
+to the game tree. The node heuristic is an estimate of the perfect-information value of z, as evaluated by
+the chess engine Stockfish 14 [39]. If z is the first node in its infoset that has been expanded, a local regret
+minimizer is created for PCFR+, and it is initialized to pick the action with highest value according to the
+node heuristic.9
+
+3.4
+
+Step 4: Repeat
+
+The above two steps are repeated, in parallel using a multi-threaded implementation, until a time budget
+is exceeded. Our implementation uses one thread running CFR and two threads expanding the game tree,
+which is shared across all three threads. The node expansion threads use locks to avoid expanding the same
+node, but the equilibrium computation thread uses no locks and only works on the already-expanded portion
+of the game tree. The time budget is set heuristically based on the amount of time remaining on the player’s
+clock. Once the time budget is exceeded, the tree expansion threads (Step 3) are stopped first, and then, after
+a delay, the equilibrium computation thread (Step 2). The added time allocated to equilibrium computation
+is present so that a more precise equilibrium can be computed without the tree constantly changing.
+
+3.5
+
+Step 5: Selecting a move
+
+After those computations have stopped, a move is selected based on the (possibly mixed) strategy that
+PCFR+ has computed. Instead of directly sampling from this distribution, we first purify it [19]—that is,
+we limit the amount of randomness. In particular, we sample from only the m highest-probability actions,
+where 1 ≤ m ≤ 3 is chosen based on the computed strategies. We only allow mixing (m > 1) when the
+algorithm believes that its computed strategy is safe—intuitively, this is when the algorithm’s final strategy
+xT can guarantee expected value at least as good as what the algorithm thought to be possible before the
+turn. This purification technique made a significant difference in practice, detailed via an ablation test in the
+supplementary materials.
+
+4
+
+Experimental evaluation
+
+To evaluate our techniques, we conducted several experiments. The first was a 1,000-game match against the
+previous state-of-the-art AI for FoW chess [42]. Our new AI scored 85.1% (+834 =33 -133)10 , confidently
+establishing its superiority.
+We then ran two experiments against human players. The first of these was a series of games against human
+players of varying skill levels. Obscuro played a total of 117 games (with time control 3 minutes + 2 seconds
+per move).11 The skill levels of the players, measured by their chess.com Fog of War chess ratings, ranged
+from 1450 to 2006. We excluded 17 of the games for various reasons such as disconnections, the opponent
+leaving before the game finished, or the opponent clearly losing on purpose, leaving 100 completed games.
+Obscuro scored 97% (+97 =0 -3), establishing conclusively that it is stronger than humans of this level.
+Finally, we invited the top FoW chess player to a 20-game match (again at 3+2 time control). At the time
+of our match,12 this player was rated 2318 and ranked #1 on the chess.com Fog of War blitz leaderboard.
+(All 20 games are available as supplementary material.) In this match, Obscuro scored 80% (+16 =0 -4), a
+conclusive and statistically significant13 victory against the world’s strongest player. We thus conclude that
+9 Theoretically, the guarantees of PCFR+ do not depend on the initialization, which can be arbitrary. However, practically,
+we find that initializing to a “good guess” of a good action leads to faster empirical convergence to equilibrium. More details can
+be found in the supplementary material.
+10 This notation means 834 wins, 33 draws, and 133 losses.
+11 This time control was selected because it was the most popular time control played on the most popular website for FoW
+chess (chess.com) at the time of the experiment. While in regular chess both fast and slow games are common, in FoW chess
+slow games are typically not played.
+12I.e., as of the rating list on August 16, 2024 [1]
+13 p = 0.011 using an exact binomial test.
+
+6
+
+Obscuro is superhuman.
+The 20 games played against the top human are available through the following private link: https:
+//lichess.org/study/sja93Uc0
+A curated sample of particularly interesting games from our 100 games played against humans of varying
+skill levels, including all three games lost by Obscuro, is available through the following private link:
+https://lichess.org/study/1zHFym7e
+
+5
+
+Conclusions and future research
+
+We presented the first superhuman agent for FoW chess, Obscuro. Our agent is completely based on real-time
+search, so—unlike prior superhuman game-playing AI agents—required no large-scale computation to learn
+a value function or blueprint strategy. This demonstrates the power of search alone: Obscuro required no
+large-scale computational effort and ran on regular consumer hardware, in contrast to most prior superhuman
+efforts involving search that we have discussed, which have run on large computing clusters with far more
+computing power at play time. FoW chess is now the largest (measured by amount of imperfect information)
+turn-based game in which superhuman performance has been achieved and the largest game in which
+imperfect-information search techniques have been successfully applied.
+Since FoW chess is somewhat similar to regular chess, it was sufficient to combine a perfect-information
+evaluation function from regular chess (namely, that used by Stockfish) with our game-independent state-ofthe-art search algorithms for imperfect-information games. Also, Obscuro stores at all times the entire set
+of possible states in memory. While these techniques were feasible for FoW chess—due to the similarity to
+regular chess and the relatively small infosets—one can imagine even more complex games on which they will
+not work directly.
+Even more complex settings could be tackled by merging our techniques with deep reinforcement learning
+to learn the evaluation function, instead of using a perfect-information-game evaluation function (in our
+case, from Stockfish), and/or using continuation strategies [9] to mitigate game-theoretic issues caused by
+using node-based evaluation functions in imperfect-information games. In a different direction, further play
+strength and scalability could be achieved by sampling from an infoset using a model of opponent behavior
+instead of doing so uniformly.
+
+References
+[1] Fog of War Chess - Leaderboards - Play Chess Variants Online - chess.com. https://www.chess.com/
+variants/fog-of-war/leaderboards, 2024. [Online; accessed 16-August-2024].
+[2] Chess Statistics. https://www.chessgames.com/chessstats.html, 2024. [Online; accessed 16-Sep2024].
+[3] Fog of War Chess - Leaderboards - Play Chess Variants Online - chess.com. https://www.chess.com/
+variants/fog-of-war/leaderboards, 2025. [Online; accessed 13-April-2025].
+[4] What is Fog Of War chess? — Chess.com Help Center. https://support.chess.com/en/articles/
+8708650-what-is-fog-of-war-chess, 2025. [Online; accessed 13-April-2025].
+[5] Christopher Berner, Greg Brockman, Brooke Chan, Vicki Cheung, Przemyslaw Debiak, Christy Dennison,
+David Farhi, Quirin Fischer, Shariq Hashme, Chris Hesse, et al. Dota 2 with large scale deep reinforcement
+learning. arXiv preprint arXiv:1912.06680, 2019.
+[6] Noam Brown and Tuomas Sandholm. Regret-based pruning in extensive-form games. In Neural
+Information Processing Systems (NeurIPS), 2015.
+[7] Noam Brown and Tuomas Sandholm. Safe and nested subgame solving for imperfect-information games.
+In Neural Information Processing Systems (NeurIPS), 2017. First published in AAAI-17 Workshop on
+Computer Poker and Imperfect Information Games, submitted November 4, 2016.
+
+7
+
+[8] Noam Brown and Tuomas Sandholm. Superhuman AI for heads-up no-limit poker: Libratus beats top
+professionals. Science, 359(6374):418–424, 2018.
+[9] Noam Brown and Tuomas Sandholm. Superhuman AI for multiplayer poker. Science, 365(6456):885–890,
+2019.
+[10] Noam Brown, Tuomas Sandholm, and Brandon Amos. Depth-limited solving for imperfect-information
+games. In Neural Information Processing Systems (NeurIPS), 2018.
+[11] Noam Brown, Anton Bakhtin, Adam Lerer, and Qucheng Gong. Combining deep reinforcement learning
+and search for imperfect-information games. In Neural Information Processing Systems (NeurIPS), 2020.
+[12] Neil Burch, Michael Johanson, and Michael Bowling. Solving imperfect information games using
+decomposition. In AAAI Conference on Artificial Intelligence (AAAI), 2014.
+[13] Murray Campbell, A Joseph Hoane Jr, and Feng-hsiung Hsu. Deep Blue. Artificial Intelligence, 134
+(1-2):57–83, 2002.
+[14] Paolo Ciancarini and Gian Piero Favini. Monte Carlo tree search techniques in the game of Kriegspiel.
+In International Joint Conference on Artificial Intelligence (IJCAI), 2009.
+[15] Gabriele Farina and Tuomas Sandholm. Fast payoff matrix sparsification techniques for structured
+extensive-form games. In AAAI Conference on Artificial Intelligence (AAAI), volume 36, pages 4999–5007,
+2022.
+[16] Gabriele Farina, Christian Kroer, and Tuomas Sandholm. Faster game solving via predictive Blackwell
+approachability: Connecting regret matching and mirror descent. In AAAI Conference on Artificial
+Intelligence (AAAI), pages 5363–5371, 2021.
+[17] Gabriele Farina, Julien Grand-Clément, Christian Kroer, Chung-Wei Lee, and Haipeng Luo. Regret
+matching+: (in)stability and fast convergence in games. Neural Information Processing Systems
+(NeurIPS), 36, 2024.
+[18] Sam Ganzfried and Tuomas Sandholm. Endgame solving in large imperfect-information games. In
+International Conference on Autonomous Agents and Multi-Agent Systems (AAMAS), 2015. Early
+version in AAAI-13 workshop on Computer Poker and Imperfect Information.
+[19] Sam Ganzfried, Tuomas Sandholm, and Kevin Waugh. Strategy purification and thresholding: Effective
+non-equilibrium approaches for playing large games. In International Conference on Autonomous Agents
+and Multi-Agent Systems (AAMAS), 2012.
+[20] Ryan W Gardner, Gino Perrotta, Anvay Shah, Shivaram Kalyanakrishnan, Kevin A Wang, Gregory
+Clark, Timo Bertram, Johannes Fürnkranz, Martin Müller, Brady P Garrison, et al. The machine
+reconnaissance blind chess tournament of neurips 2022. In NeurIPS 2022 Competition Track, pages
+119–132. PMLR, 2023.
+[21] Andrew Gilpin and Tuomas Sandholm. A competitive Texas Hold’em poker player via automated
+abstraction and real-time equilibrium computation. In National Conference on Artificial Intelligence
+(AAAI), pages 1007–1013, 2006.
+[22] Andrew Gilpin and Tuomas Sandholm. Better automated abstraction techniques for imperfect information
+games, with application to Texas Hold’em poker. In International Conference on Autonomous Agents
+and Multi-Agent Systems (AAMAS), pages 1168–1175, 2007.
+[23] Michael Johanson, Kevin Waugh, Michael Bowling, and Martin Zinkevich. Accelerating best response
+calculation in large extensive games. In International Joint Conference on Artificial Intelligence (IJCAI),
+2011.
+[24] Garry Kasparov and Frederic Friedel. Reconstructing turing’s “paper machine”. ICGA Journal, 3(2):
+1–8, 2018.
+
+8
+
+[25] Levente Kocsis and Csaba Szepesvári. Bandit based Monte-Carlo planning. In European Conference on
+Maching Learning (ECML), pages 282–293. Springer, 2006.
+[26] Vojtěch Kovařı́k, Dominik Seitz, and Viliam Lisỳ. Value functions for depth-limited solving in imperfectinformation games. In AAAI Reinforcement Learning in Games Workshop, 2021.
+[27] Weiming Liu, Haobo Fu, Qiang Fu, and Yang Wei. Opponent-limited online search for imperfect
+information games. In International Conference on Machine Learning (ICML), pages 21567–21585.
+PMLR, 2023.
+[28] Matej Moravcik, Martin Schmid, Karel Ha, Milan Hladik, and Stephen Gaukrodger. Refining subgames
+in large imperfect information games. In AAAI Conference on Artificial Intelligence (AAAI), 2016.
+[29] Matej Moravčı́k, Martin Schmid, Neil Burch, Viliam Lisý, Dustin Morrill, Nolan Bard, Trevor Davis,
+Kevin Waugh, Michael Johanson, and Michael Bowling. DeepStack: Expert-level artificial intelligence in
+heads-up no-limit poker. Science, 356(1667):508–513, May 2017.
+[30] Austin Parker, Dana Nau, and VS Subrahmanian. Game-tree search with combinatorially large belief
+states. In International Joint Conference on Artificial Intelligence (IJCAI), pages 254–259, 2005.
+[31] Julien Perolat, Bart De Vylder, Daniel Hennes, Eugene Tarassov, Florian Strub, Vincent de Boer, Paul
+Muller, Jerome T Connor, Neil Burch, Thomas Anthony, et al. Mastering the game of stratego with
+model-free multiagent reinforcement learning. Science, 378(6623):990–996, 2022.
+[32] David Brine Pritchard. The encyclopedia of chess variants. Games & Puzzles Publications, 1994.
+[33] Stuart Russell and Jason Wolfe. Efficient belief-state AND-OR search, with application to Kriegspiel. In
+National Conference on Artificial Intelligence (AAAI), 2005.
+[34] Martin Schmid, Matej Moravčı́k, Neil Burch, Rudolf Kadlec, Josh Davidson, Kevin Waugh, Nolan Bard,
+Finbarr Timbers, Marc Lanctot, G Zacharias Holland, et al. Student of games: A unified learning
+algorithm for both perfect and imperfect information games. Science Advances, 9(46):eadg3256, 2023.
+[35] David Silver, Aja Huang, Chris J Maddison, Arthur Guez, Laurent Sifre, George Van Den Driessche,
+Julian Schrittwieser, Ioannis Antonoglou, Veda Panneershelvam, Marc Lanctot, et al. Mastering the
+game of Go with deep neural networks and tree search. Nature, 529(7587):484, 2016.
+[36] David Silver, Julian Schrittwieser, Karen Simonyan, Ioannis Antonoglou, Aja Huang, Arthur Guez,
+Thomas Hubert, Lucas Baker, Matthew Lai, Adrian Bolton, et al. Mastering the game of go without
+human knowledge. Nature, 550(7676):354–359, 2017.
+[37] David Silver, Thomas Hubert, Julian Schrittwieser, Ioannis Antonoglou, Matthew Lai, Arthur Guez,
+Marc Lanctot, Laurent Sifre, Dharshan Kumaran, Thore Graepel, et al. A general reinforcement learning
+algorithm that masters chess, shogi, and go through self-play. Science, 362(6419):1140–1144, 2018.
+[38] Samuel Sokota, Gabriele Farina, David J Wu, Hengyuan Hu, Kevin A Wang, J Zico Kolter, and Noam
+Brown. The update-equivalence framework for decision-time planning. 2024.
+[39] Stockfish. https://stockfishchess.org/.
+[40] Oriol Vinyals, Igor Babuschkin, Wojciech M Czarnecki, Michaël Mathieu, Andrew Dudzik, Junyoung
+Chung, David H Choi, Richard Powell, Timo Ewalds, Petko Georgiev, et al. Grandmaster level in
+StarCraft II using multi-agent reinforcement learning. Nature, 575(7782):350–354, 2019.
+[41] Kevin Waugh, Nolan Bard, and Michael Bowling. Strategy grafting in extensive games. In Neural
+Information Processing Systems (NeurIPS), 2009.
+[42] Brian Hu Zhang and Tuomas Sandholm. Subgame solving without common knowledge. Neural
+Information Processing Systems (NeurIPS), 34:23993–24004, 2021.
+[43] Martin Zinkevich, Michael Bowling, Michael Johanson, and Carmelo Piccione. Regret minimization in
+games with incomplete information. In Neural Information Processing Systems (NeurIPS), 2007.
+
+9
+
+Acknowledgments
+We thank Stephen McAleer for helpful discussions. This material is based on work supported by the Vannevar
+Bush Faculty Fellowship ONR N00014-23-1-2876, National Science Foundation grants RI-2312342 and RI1901403, ARO award W911NF2210266, and NIH award A240108S001. B.H.Z. is also supported by the CMU
+Hans J. Berliner Graduate Fellowship in Artificial Intelligence.
+
+10
+
+A
+
+Rules of FoW chess
+
+FoW chess is identical to regular chess, except for the following differences [4].
+• A player wins by capturing the opposing king. There is no check or checkmate. Thus:
+– Moving into (or failing to escape) a check is legal and thus results in immediate loss.
+– Castling into, out of, or through check is legal (though, of course, castling into check loses
+immediately).
+– Stalemate is a forced win for the stalemating player.
+– There is no draw by insufficient material. In particular, KN vs K is a strong position for the KN,
+and even K vs K is not an immediate draw (although K vs K is drawn in equilibrium except in
+some literal edge cases where one king is on the edge of the board and cannot immediately escape.)
+• After every move, each player observes all squares onto which her pieces can legally move.
+• If a pawn is blocked from moving forward by an opposing piece (or pawn), the square on which the
+opposing piece/pawn sits is not observed. Thus, the player knows that the pawn is blocked, but not
+what is blocking it (unless, of course, some other piece can capture it.)
+• If a pawn can capture en passant, the pawn that can be captured en passant is visible.
+In particular, the above rules imply that both players always know their exact set of legal moves.
+• Threefold repetition and 50-move-rule draws do not need to be claimed. In particular, a draw under
+either rule can happen without either player knowing for certain until it happens and the game ends.
+
+B
+
+Further details about Obscuro
+
+The techniques used in Obscuro are general, so in this section we will formulate them in terms of general
+extensive-form games. To do this, we need to introduce some notation.
+A two-player zero-sum timeable extensive-form game (hereafter simply game) consists of:
+1. a tree of histories H, rooted at the empty history ∅ ∈ H. The set of leaves (terminal nodes) of H is
+denoted Z. Each downward edge out of a non-leaf node h ∈ H \ Z is labeled with a distinct action or
+move. The node reached by following the edge (action) a at node h is denoted ha. The set of actions
+available at h is denoted A(h).
+2. a payoff function u : Z → [−1, +1],
+3. a partition H \ Z = HC ⊔ H▲ ⊔ H▼ , denoting whose turn it is—that is, for each i ∈ {C, ▲, ▼}, Pi is
+the set of nodes at which player i moves. Player C is chance, who plays according to a fixed strategy
+p(·|h).14
+4. for each player i ∈ {▲, ▼} and each h ∈ H, an observation oi (h) that player i receives upon reaching h.
+The observation uniquely determines whether h ∈ Pi (i.e., whether it is player i’s turn) and, if it is, the
+set of legal actions. That is, if oi (h) = oi (h′ ), then h ∈ Pi if and only if h′ ∈ Pi , and if so, A(h) = A(h′ ).
+We will use ⪯ to denote the precedence relation on a tree. For example, if h, h′ are histories then h ⪯ h′
+means h is an ancestor of h′ . If s, s′ are sequences of player i, then s ⪯ s′ means that s is a prefix of s′ . If S
+is a set, s ⪰ S means s ⪰ s′ for some s′ ∈ S. The downward closure of S is S̄ := {h : h ⪰ S}. 15
+We will distinguish between states and histories. A state is a sufficient statistic for future play of the game.
+That is, all data about the subtree rooted at a history h is uniquely determined by the state at h. Multiple
+histories can have the same state.
+14 FoW chess contains no chance moves, but we include this in the interest of generality.
+15 In this paper, we visualize trees expanding from the top downwards, so S̄ is the set of descendants of S.
+
+11
+
+The sequence of a player i upon reaching a node h ∈ H is the sequence of observations made and actions
+played by i so far. Two nodes h, h′ are indistinguishable to player i, written h ∼i h′ , if they have the same
+sequence for player i. An equivalence class of H under ∼i is an infoset, for player i. Throughout this paper,
+I will denote a ▲-infoset, and J will denote a ▼-infoset. We will assume, without loss of generality, that the
+player sequence and opponent sequence together uniquely specify a game tree node—that is, |I ∩ J| = 1 for
+every ▲-infoset I and ▼-infoset J.
+By convention, information sets containing nodes at which player i is not the acting player are typically not
+drawn (and often not even defined); in our paper, we will need them in order to define the knowledge graph.
+Thus let I (resp. J ) denote the set of infosets at which ▲ (resp. ▼) is the acting player. If a is a legal action
+at an infoset I ∈ I, the sequence reached by playing a at I is (I, a). The set of nodes {ha : h ∈ I} will also
+be denoted (I, a). Let si (h) denote the sequence of player i at h, as of the last time player i played an action.
+Thus, s▲ (h) (resp. s▼ (h)) can be identified with a pair (I, a) where I ∈ I (resp. (J, a) where J ∈ J ).
+A (behavioral) strategy of ▲ (resp. ▼) is a selection of a distribution of actions at each infoset, x ∈ X =
+
+×I∈I ∆(A(I)) (resp. y ∈ Y = ×J∈J ∆(A(J))). We will use′ the general notation′ x(u′|u), where u ⪯ u′ to
+
+denote the probability that ▲ plays all actions on the u → u path, where u and u are sequences, infosets, or
+nodes. Similarly, x(a|u) denotes the probability that x takes action a at u (when u ∈ I or u ∈ H▲ ). If the
+right half is omitted, e.g., x(u), it is understood to be ∅, e.g., x(u) = x(u|∅). In particular, x(h) denotes the
+probability that ▲ plays all actions on the ∅ → h path. Similar notation is used for ▼.
+
+The expected value for ▲ in strategy profile π = (x, y) is u(π) := Ez∼π u(z) where the expectation is over
+terminal nodes z when ▲ plays x and ▼ plays y. (Since the game is zero sum, the value for ▼ is −u(π).)
+The conditional value u(π|S) is the conditional expectation given that some node in the set S is hit. The
+(conditional) best-response value u∗ (x|J, a) to a ▲-strategy x ∈ X upon playing action a at infoset J is the
+best possible conditional value that ▼ against x after playing a at J:
+u∗ (x|J, a) =
+
+min
+
+u(x, y|J).
+
+y∈Y :y(J,a)=1
+
+Counterfactual values (CFVs), which we will denote by ucf , are defined similarly to conditional values, but
+scaled by the probability of the other players playing to J:
+X
+X
+ucf
+x(h)p(h) =
+x(z)p(z)y(z|h)u(z).
+▲ (x, y; J, a) = u(x, y|J, a) ·
+z⪰J
+
+h∈J
+
+The best-response value at infoset J is u∗ (x|J) = mina u∗ (x|J, a). The best-response value u∗ (x) is
+miny∈Y u(x, y) = u∗ (x|∅). Analogous definitions hold when the players are swapped.
+
+B.1
+
+Order-k knowledge, common knowledge, and subgame solving
+
+In this section, we present the mathematical notation we will use in the rest of the supplementary material,
+and relevant prior work on subgame solving (see, e.g., [26] for an overview).
+The connectivity graph G of a game Γ is the graph whose vertices are the nodes of Γ, and whose edges connect
+nodes in the same infoset of any player. Now let I be any infoset.16 The order-k knowledge set I k is the set
+of nodes at distance strictly less than k from some node in I. (In particular, I 1 = I.) The common-knowledge
+set I ∞ is the set of all nodes a finite distance away from some node in I, i.e., it is the connected component
+in G containing I. Intuitively, the distance from I captures the level of common knowledge. If the true node
+is h ∈ I, then
+1. ▲ knows h ∈ I,
+2. ▲ knows ▼ knows h ∈ I 2 ,
+3. ▲ knows ▼ knows ▲ knows h ∈ I 3 ,
+16 The definition of I k can also be applied to arbitrary sets of nodes I, but here we will only need it for infosets.
+
+12
+
+and so on. Hence the statement h ∈ I ∞ is common knowledge.
+In the remainder of the paper, we take the perspective of the maximizing player ▲. Subgame solving starts
+with a blueprint strategy profile (x, y). In Obscuro, the blueprint strategy profile is simply the saved strategy
+from the computation on the previous move; on the first move, subgame solving does not require a blueprint.
+Suppose that we reach infoset I during a game. Before selecting a move at I, we would like to do some
+computation to compute a new strategy x′ that we will use instead of x. That is, we would like to perform
+subgame solving.
+We will first describe two common variants of common-knowledge subgame solving: Resolve [12] and
+Maxmargin [28], both of which we will use in Obscuro. Both variants begin by constructing a gadget game
+using common-knowledge set I ∞ , and are based on the principle of searching for a strategy x′ that does not
+worsen the opponent’s best response values. More formally, let M (x′ , J) := u∗ (x′ |J) − u∗ (x|J) be the margin
+at ▼-infoset J ⊆ I ∞ . The alternate value u∗ (x|J) is the value to which ▲ must restrict ▼ at J in order to
+ensure that exploitability does not increase.
+Maxmargin and Resolve differ in how they aggregate the margins across the different information sets J ∈ J0 .
+The Maxmargin objective is to maximize the minimum margin:
+max
+min M (x′ , J).
+′
+x
+
+J∈J0
+
+The Resolve objective is to maximize the average margin truncated to zero:
+max
+′
+x
+
+1 X
+[M (x′ , J)]−
+|J0 |
+
+where
+
+[z]− := min{0, z}.
+
+J∈J0
+
+and J0 := {J : J ⊆ I ∞ } is the set of possible root infosets for ▼ in the subgame.
+A subgame solving method is safe if applying it cannot increase exploitability of the overall agent compared
+to not applying it—i.e., compared to playing the blueprint strategy. Both Maxmargin and Resolve are safe,
+assuming of course that subgames are solved exactly.17
+Subgame solving via Resolve and Maxmargin can also be performed using gadget games. In Resolve, the
+following gadget game is played. First, chance chooses a node h ∈ I ∞ with probability proportional to
+p(h)x(h). Then, ▼ observes the infoset J ∋ h, and decides whether to play or exit. If ▼ exits, the game
+ends immediately with utility equal to the alternate value u∗ (x|J). Otherwise, the game continues as normal
+from node h. In Maxmargin, ▼ first selects the infoset J ∈ J0 , and then chance samples a node h ∈ J with
+probability proportional to p(h)x(h). Then, ▲ immediately receives utility −u∗ (x|J).18 Chance then selects
+a node h ∈ J with probability proportional to p(h)x(h), and the game continues from h.
+Maxmargin and Resolve have very different behavior. When it is impossible to make all margins nonnegative
+(due to approximations), Maxmargin will make the pessimistic assumption that the opponent will play the
+worst infoset, whereas Resolve will, roughly speaking, assume that the opponent will play uniformly over all
+infosets with negative margin. On the other hand, when it is possible to make all margins nonnegative, there
+is a set of subgame strategies that are maximizers of the Resolve objective, that is, equilibria of the Resolve
+gadget game. Resolve allows any one of these strategies to be selected, whereas Maxmargin enforces that the
+strategy be in particular the one that maximizes the minimum margin.
+In the state-of-the-art common knowledge subgame-solving technique, reach subgame solving [7], any gifts
+given to us by the opponent through mistakes in reaching the subgame can be given back to the opponent
+within the subgame; this enlarges the strategy space that we can optimize over safely and thus has been
+shown to yield stronger play (e.g., in poker games [7, 8, 10, 9]). This is done by adjusting the alternate values
+u∗ (x|J) in the case when ▼ provably made a mistake(s) in playing to reach J. Reach subgame solving can be
+17 In our application, safety is hard to reason about: neither the blueprint strategy x nor the subgame-solved strategy x′ are
+full-game strategies, so asking the question of which is less exploitable is strange.
+18 This can be implemented, for example, by adding u∗ (x|J) to the value of every terminal node z ⪰ J in the subgame.
+
+13
+
+applied on top of either Resolve or Maxmargin. In particular, the value
+i
+X h
+′ ′
+cf*
+′
+ucf*
+(x;
+J
+a
+)
+−
+u
+(x;
+J
+)
+,
+g(J) :=
+▼
+▼
+J ′ a′ ⪯J
+
+which is an estimate of the gift using the current strategy profile (x, y), is added to the alternate value at
+each infoset J ∈ J0 .
+In those prior subgame-solving techniques and ours, the desired gadget game then replaces the full game,
+and its solution is used to select a move at I. When a new infoset is reached, the process repeats, with the
+solution to the previous subgame taking the place of the blueprint.
+
+B.2
+
+Prior state of the art in FoW chess
+
+The best prior AI agent for FoW chess was developed by Zhang and Sandholm [42] (hereafter ZS21). In this
+section, we detail the parts of Obscuro that are carried over from that prior work before we present our new
+techniques.
+Obscuro decides between Maxmargin and Resolve by examining the current objective value in the subgame.
+If ▼ always chooses to exit in the resolve gadget (i.e., the current strategy is safe), Maxmargin is used.
+Otherwise, Resolve is used. This switch may happen, even multiple times, in the middle of the search process
+for a move, if the subgame value is fluctuating. Intuitively, this choice prevents the agent from being too
+pessimistic when faced with novel situations that it did not anticipate.
+Between moves, Obscuro maintains the list of all possible states given its current sequence of observations, as
+well as the search tree and current approximate equilibrium strategy profile (x, y) from the previous search.
+This previous strategy profile (x, y) is used as the blueprint for subgame solving.
+When it is Obscuro’s turn, Obscuro first builds both the Maxmargin and Resolve gadget subgames. The
+gadget subgames share the same game tree in memory after the subgame root layers. Thus, for example,
+node expansions and strategy updates for infosets beyond the subgame root layers apply to both subgame
+gadgets. This allows the transition between the two subgames, if necessary, to be smoothly executed.
+If insufficiently many nodes exist in the sample of Obscuro’s current infoset I, nodes are added by sampling
+at random without replacement from the set of possible states. At newly-added nodes h, the opponent
+is assumed to have perfect information, and the alternate value is set to min{ṽ(h), v ∗ } where v ∗ was the
+expected value of Obscuro in the previous search, and ṽ(h) is Stockfish’s evaluation function evaluated at h.
+
+B.3
+
+Improvements of Obscuro
+
+We now detail the improvements over ZS21 that we developed in Obscuro. We also include pseudocode for
+the major components of Obscuro, in Figures 8-12.
+B.3.1
+
+Better alternate values and gift values
+
+For alternate values in both Resolve and Maxmargin, in Obscuro we use u(x, y|J) instead of the best-response
+value u∗ (x|J) which is more typically used in subgame solving as we described in the subgame solving section
+of the supplementary material [7]. Similarly, we use the counterfactual values ucf (x, y; J, a) and ucf (x, y; J) to
+define the gift instead of the counterfactual best responses ucf* (x; J, a) and ucf* (x; J), resulting in the gift
+estimate
+X
+ĝ(J) :=
+[ucf (x, y; J ′ a′ ) − ucf (x, y; J ′ )]+
+J ′ a′ ⪯J
+
+These changes are for stability reasons: especially late in the tree, the current strategy x may be inaccurate,
+and the best-response value u∗ (x|J) may not be an accurate reflection of the quality of the blueprint strategy
+x, especially near the top of the tree. Of course, if (x, y) is actually an equilibrium of the constructed subgame,
+then these values are the same.
+14
+
+B.3.2
+
+Better root distribution for Resolve
+
+When using Resolve19 for the subgame solve in KLSS in games with no chance actions, the standard algorithm
+for Resolve will choose an opponent infoset J uniformly at random from the distribution of possible infosets.
+In reality, the correctness of Resolve does not depend on the distribution chosen, so long as it is fully mixed.
+To be more optimistic, we therefore use a different distribution. We choose an infoset J via an even mixture
+of a uniformly random distribution and the distribution of infosets generated from the opponent strategy in
+the blueprint. That is, the probability of the subgame root being infoset J is
+
+
+1
+y(J)
+1
+P
+α(J) :=
++
+,
+′
+2
+m
+J ′ y(J )
+where m is the number of ▼-infosets in the current subgame and the sum is taken over those same infosets.
+In other words, the Resolve objective becomes
+X
+max
+α(J)[M (x′ , J)]− .
+′
+x
+
+J∈J0
+
+In this manner, more weight is given to those positions that were found to be likely in the previous iteration,
+while maintaining at least some positive weight on every strategy.
+B.3.3
+
+Better node expansion via GT-CFR
+
+Growing-tree CFR (GT-CFR) [34] is a general technique for computing good strategies in games. Intuitively,
+it works, like PUCT, by maintaining a current game Γ̃ and simultaneously executing two subroutines: one
+that attempts to solve the game Γ̃, and one that expands leaf nodes of Γ̃. As mentioned in the body, we use
+PCFR+ for game solving.
+For expansion, we use a new variant of GT-CFR which we call one-sided GT-CFR, which, unlike PUCT
+and GT-CFR, may only expand a small fraction of nodes in the tree. As stated in the body, our one-sided
+GT-CFR algorithm selects the node to expand according to the profile (x̃t , y t ), where y t is the non-expanding
+player’s current CFR strategy and x̃t is an exploration profile constructed from the expanding player’s current
+strategy.20 As in GT-CFR, the expanding player’s strategy x̃t is a mixture of a strategy x̃tMax (a|I) derived
+from the player’s current strategy xt and an exploration strategy x̃tPUCT (a|I) derived from PUCT [35]. In
+particular, we define
+x̃tMax (a|I) ∝ 1{xt (a|I) > 0}
+to be the uniform distribution over the support of the current CFR strategy, and
+x̃tPUCT (a|I) = 1{a = argmax Q̄(I, a)}
+a′
+
+where
+p
+N t (I)
+Q̄(I, a) = u(x , y |I, a) + Cσ (I, a)
+.
+1 + N t (I, a)
+t
+
+t
+
+t
+
+Here, C is a tuneable parameter (which we set to 1); σ t (I, a) is the empirical variance of u(xt , y t |I, a) over
+the previous times we have visited I during expansion (with two prior samples of −1 and +1 to ensure it is
+never zero); N t (I) is the number of times infoset I has been visited during expansion; and N t (I, a) is the
+number of times action a has been selected. Finally, as in GT-CFR, we define
+x̃tsample (a|I) =
+
+1 t
+1
+x̃Max (a|I) + x̃tPUCT (a|I).
+2
+2
+
+19 For Maxmargin, there is no prior distribution because the adversary picks the distribution.
+20 In this presentation, ▲ is the expanding player. When ▼ is the expanding player, the roles of x and y are also flipped. As
+
+stated in the body, the expanding player alternates between ▲ and ▼ after every node expansion.
+
+15
+
+Unlike GT-CFR as originally described [34], our one-sided GT-CFR works on the game tree itself, not the
+public tree. The public tree in our setting would be difficult to work with since the amount of common
+knowledge is very low.
+Our one-sided GT-CFR, unlike PUCT and GT-CFR [25, 34], is not guaranteed to eventually expand the
+whole game tree. For example, suppose that our game Γ̃ is as in Figure 3, and that both players are currently
+playing the strategy “always play left”. Then Node F is reached by both players, nodes G and H are reached
+by only one of the two players (▲ and ▼ respectively), and Node J is reached by neither player. As such,
+Node J will not be expanded, and if the current strategy is an equilibrium, this can be proven without knowing
+the details of any subtree that may exist at J.
+
+A
+
+B
+
+C
+
+D
+
+E
+F
+
+G
+
+H
+
+J
+
+Figure 3: The game tree from Figure 2, now with some nodes labeled, which will be referenced in the text.
+Nonetheless, we can still show an asymptotic convergence result:
+Theorem 1. For any given ϵ > 0, the average strategy profile (x̄, ȳ) in one-sided GT-CFR eventually
+converges to an ϵ-Nash equilibrium of any finite two-player zero-sum Γ.21
+Proof. Since Γ is finite, eventually one-sided GT-CFR stops expanding nodes. At this time, let Γ̃ be the
+expanded game tree. Since no more nodes are expanded, and CFR is correct, one-sided GT-CFR eventually
+converges to an approximate Nash equilibrium (x̄, ȳ) of Γ̃. At this time, it is perhaps the case that there remain
+unexpanded nodes in the current tree Γ̃. However, any such nodes must have been played with asymptotic
+probability 0 by both players; otherwise, if (say) ▼ plays to an unexpanded node h with asymptotically positive
+probability, then h would have been expanded at some point when ▲ was the expander. Thus, best-response
+values in Γ̃ are the same as they are in Γ, and therefore (x̄, ȳ) is also an approximate equilibrium in Γ.
+B.3.4
+
+Evaluating new leaves
+
+When a (non-terminal) leaf node z of Γ̃ is selected, it is expanded. That is, all of its children are added to the
+tree. To assign utility values the children of z, we run the open-source engine Stockfish 14 [39], in MultiPV
+mode, at depth 1 on node z, which gives evaluations for all children of z in a single call,22 and clamp its
+result to [−1, +1] in the same manner as done by ZS21 [42].
+When the children of z are added to the tree, z becomes a nonterminal node and hence will be placed in
+an infoset. If z is the first node of its infoset to be expanded in Γ̃, we also need to initialize a new regret
+minimizer to be used by PCFR+ at this new infoset. Doing so naively would cause a sort of instability: the
+evaluation of z will be (approximately) equal to the largest evaluation of any child of z (due to how regular
+perfect-information evaluation functions work), but PCFR+ normally would initialize its strategy uniformly
+at random. Thus, the evaluation of z would suddenly change to being the average of the evaluations of the
+children of z, which could be very different from the maximum (for example, if the move at z is essentially
+forced). To mitigate this instability, we exploit the property that, in CFR (and all its variants, including
+21 Technically, (x̄, ȳ) is only a partial strategy in Γ, since it does not specify how to play after any unexpanded nodes. However,
+this is fine: any extension of (x̄, ȳ) will be an equilibrium of Γ, and unexpanded nodes are not reached by either player. For
+clarity, as is typical for extensive-form games (see, e.g., Zinkevich et al. [43]), the average of strategies is always taken in sequence
+PT
+t
+form. That is, x̄ is the strategy for which x̄(h) = T1
+t=1 x (h).
+22 Using a single call has two minor advantages: first, it takes advantage of slight extensions that may be used in Stockfish at
+low depth; second, it reduces the overhead of calling Stockfish to one call per node being expanded, instead of one call per child
+of that node.
+
+16
+
+PCFR+), the first strategy can be arbitrary. Conventionally it is set to the uniform random strategy, but we
+instead set it by placing all weight on the best child of z as evaluated by Stockfish.
+B.3.5
+
+Knowledge-limited subgame solving
+
+ZS21 [42] uses knowledge-limited subgame solving (KLSS). KLSS results from two changes to commonknowledge subgame solving. Let I be the current infoset of ▲. As an example, consider the game in Figure 3,
+and let I be the infoset at A. Let k be an odd positive integer. Then ZS21 [42] defines k-KLSS by making the
+following two changes.
+1. Nodes outside the downward closure I k+1 are completely removed from the game tree. In Figure 3, this
+would amount to removing the subtrees rooted at C, D, and E.
+2. ▲-nodes in I k+1 \ I k are frozen to their strategies in the blueprint, i.e., they are made into chance
+nodes with fixed action probabilities. In Figure 3, this amounts to making Node B a chance node.
+ZS21 sets k = 1 in their FoW chess agent. Freezing the ▲-nodes in I 2 \ I 1 allows their equilibrium-finding
+module, which is based on linear programming, to scale more efficiently, since the nodes in that subtree are
+now only dependent on ▼’s strategy, not ▲’s.
+KLSS, as implemented by ZS21, already lacks safety guarantees: they have an explicit counterexample in
+which using KLSS may decrease the quality of the strategy relative to just using the blueprint. We make one
+simple change to KLSS for Obscuro: we allow ▲-nodes in I 2 \ I to be unfrozen and hence re-optimized in the
+subgame. We may call this 2-knowledge-limited unfrozen subgame solving (KLUSS),23 since its complexity
+depends on the order-2 subgame I 2 . 2-KLUSS essentially amounts to pretending that I 2 = I ∞ .
+We now make a few remarks about KLUSS.
+1. Like 1-KLSS, 2-KLUSS lacks safety guarantees in the worst case. However, KLSS is often safe in
+practice [42], and KLUSS outperforms KLSS in FoW chess as we will show in the ablation experiments
+later in this supplement. There are two further considerations:
+(a) Obscuro does not have a full-game blueprint: its blueprint is simply the strategy from the previous
+timestep, which is depth limited. Thus, we must use some form of subgame solving to play
+the game. KL(U)SS is currently the only variation of subgame solving that is both somewhat
+game-theoretically motivated for imperfect-information games and computationally feasible in a
+game like FoW chess.
+(b) Although both KLSS and KLUSS are unsafe in the worst case, it should be heuristically intuitive
+that they should improve performance more when the blueprint itself is of low quality. Indeed,
+we expect our “blueprints” (strategies carried over from the previous timestep) to have rather low
+quality, especially deep in the search tree where such strategies are based on very low-depth search!
+So, we believe heuristically that using KL(U)SS in this manner should usually be game-theoretically
+sound.
+2. Since our equilibrium-finding module for Obscuro is based on CFR instead of linear programming—in
+particular, it uses the full game tree Γ̃ instead of a sequence-form representation—it does not benefit
+from freezing the ▲-nodes in I 2 \ I 1 , since those nodes would still need to be maintained. Thus, there
+is less reason for us to freeze those nodes. Further, with straightforward pruning techniques (namely,
+partial pruning [6]), CFR iterations usually take sublinear time in the size of the game tree (unlike
+linear programming, which takes at least linear time in the representation size), reducing the need to
+optimize the size of the game representation.
+3. Again since we use CFR, the solutions that are computed by the equilibrium-finding module are
+inherently approximate, and especially at levels deep in the tree, their approximation can be relatively
+poor. As such, allowing these infosets to be unfrozen gives them the chance to learn better actions.
+23 This can be easily generalized to k-KLUSS for any k.
+
+17
+
+4. 1-KLSS removes the nodes in I 2 \ I 1 , folding them into the sequence-form representation for efficiency.
+In contrast, our approach of maintaining these nodes allows them to be selected for expansion. This
+fixes a weakness of ZS21: ZS21 was only capable of searching for bluff opportunities “locally”, since any
+▲-node in I 2 \ I 1 would cease to be in the tree once the search horizon was passed. In contrast, Obscuro
+is capable of maintaining ▲-nodes in I 2 \ I 1 for a long time, allowing deeper bluff opportunities.
+5. Liu et al. [27] introduced a safe variant of KLSS, which they call safe KLSS, in which the subgame
+solver attempts to find a subgame strategy x′ that maintains at least the same value for every opponent
+strategy y, instead of against every infoset J. This is a much stricter condition that is much more
+difficult to satisfy and thus substantially constrains the strategy to be close to the blueprint. Therefore,
+the safety requirement significantly decreases the power and value of subgame solving, especially when
+the blueprint is bad. Moreover, safe KLSS drops all nodes outside I 1 , which once again introduces the
+problem of the previously-listed item: if we were to use safe KLSS in our setting, our AI would not be
+capable of exploiting long bluff opportunities.
+B.3.6
+
+Selecting an action
+
+As mentioned in the body, Obscuro selects its action using the last iterate of PCFR+, rather than the average
+iterate which is known to converge to a Nash equilibrium. We do this for two reasons.
+1. The stopping time of the algorithm, due to the inherent randomness of processor speeds, is already
+slightly randomized. Thus, stopping on the last iterate does not actually stop at the same timestep T
+every time: it in effect mixes among the last few strategies. Thus, we do not need to actually randomize
+ourselves to gain the benefit of randomization.
+2. PCFR+ is conjectured (e.g., [17]) to exhibit last-iterate convergence as well. Indeed, we measured
+the Nash gap of the last iterate (xT , y T ) (in the expanded game Γ̃), and the typical Nash gap was
+approximately equivalent to half a pawn—much less than the reward range of the game. This suggests
+that assuming last-iterate convergence is not unreasonable for our setting.
+B.3.7
+
+Strategy purification
+
+As mentioned in the body, we partially purify our strategy before playing. When Maxmargin is used as the
+subgame solving algorithm (i.e., when the margins are all nonnegative), we allow mixing between k = 3
+actions; when Resolve is used, we deterministically play the top action. Moreover, we only allow mixing
+among actions other than the highest-probability action if they have appeared continuously in the support of
+xt for every iteration t > T1/2 , where T1/2 is chosen to be the iteration number when half the time budget
+elapsed.24 We call such actions “stable”. These restrictions reduce the chance that transient fluctuations
+in the strategy of the player, which occur commonly during game solving especially with an algorithm like
+PCFR+, would affect the final action that is played. Any probability mass that was assigned to actions that
+are excluded in the above manner is shifted to the action with highest probability.
+
+B.4
+
+Hardware
+
+Obscuro, for its human matches, ran on a single desktop machine with a 6-core Intel i5 CPU. Ablations and
+further matches were run on an AMD EPYC 64-core server machine using 10 cores (5 per side). We now
+report statistics about the computational performance of Obscuro. These statistics were collected over the
+course of a 1,000-game sample, at a time control of 5 seconds per move.25
+• Average game length: 116.6 plies (58.3 full moves)
+• Average search depth: 10.7 plies
+• Average search tree size: 1,070,552 nodes, 14,404 infosets
+24 It will almost always be the case that T
+1/2 < T /2. This is because, as the game tree grows larger, PCFR+ iterations, whose
+time complexity scales with the size of the game tree, get slower.
+25 For this and all other AI-vs-AI matches in this paper, the stated time control, usually 5 seconds per move, is the time limit
+allocated to the main search loop, and does not include the time it takes to enumerate the set of all legal positions.
+
+18
+
+• Average search tree size carried over from previous search: 181,421 nodes, 3,162 infosets
+• Average number of possible positions: 17,264
+
+C
+
+Observations about FoW chess
+
+C.1
+
+Size of infosets and common-knowledge sets
+
+Here we elaborate on the discussions about common-knowledge sets and infosets, alluded to in the introduction.
+Consider the family of positions in which both sides have spent the first eight moves playing 1. a4 a5 2.
+b4 b5 ... 8. h4 h5, and subsequently shuffle all their remaining pieces around their first three ranks. An
+example of such a position is in Figure 4. Each player must have one bishop on a light square (12 ways), one
+bishop on a dark square (12 ways), one queen, one king, two knights, and two rooks (22 · 21 · 20 · 19 · 18 · 17/22
+ways). When multiplied, this gives a total of approximately M = 2 × 109 ways. This is a lower bound on the
+maximum size of an infoset. For common-knowledge sets, both players can arrange their pieces arbitrarily
+along the first three ranks, yielding approximately M 2 ≈ 4 × 1018 different arrangements, which provides a
+lower bound on the maximum size of a common-knowledge set.26
+
+qZ0j0Z0s
+Z0Z0s0Zb
+6
+0Z0mna0Z
+5
+opopopop
+4
+POPOPOPO
+3
+ZNZ0Z0SB
+2
+QZ0Z0ZRZ
+1
+Z0J0ZNA0
+8
+7
+
+a
+
+b
+
+c
+
+d
+
+e
+
+f
+
+g
+
+h
+
+Figure 4: FoW chess position illustrating the existence of large infosets and common-knowledge sets. A full
+explanation is given in the text.
+Although infosets can get this large, they almost never do in practical games, because both sides are making
+effort to obtain information.
+We now elaborate on Figure 1. In particular, we will show that the two positions in that figure are in the
+same common-knowledge set. Consider the sequence of positions in Figure 5, read in order from top-left to
+bottom-right. The positions marked A and B are the same as those in in Figure 1. Each position is connected
+to the next one by an infoset of one of the players: the first pair by a White infoset, the second pair by
+a Black infoset, and so on. A computer search showed that the depicted path, which has length 9, is the
+shortest path between these two positions.27 Hence, if the true position is A, then the statement Y = “The
+true position is not B” is 8th-order knowledge for both players. That is, it is true that
+everyone knows everyone knows ... everyone knows Y
+{z
+}
+|
+8 repetitions
+
+26 These common-knowledge sets are measured with respect to states, not histories. Measuring common-knowledge sets with
+histories would result in a significantly larger number, because the order of the moves would matter.
+27 A similar computer search shows that this is nearly the longest possible shortest path between any pair of nodes after two
+moves from each side: there is a shortest path of length 10, but no shortest paths longer than that.
+
+19
+
+yet the same statement would be false if there were 9 repetitions, so Y is not common knowledge.
+rmblkans
+opo0opZp
+6
+0Z0Z0Z0Z
+5
+Z0ZpZ0o0
+4
+0Z0Z0Z0Z
+3
+Z0M0Z0ZN
+2
+POPOPOPO
+1
+S0AQJBZR
+
+rmblkans
+opo0opZp
+6
+0Z0Z0Z0Z
+5
+Z0ZpZ0o0
+4
+0Z0Z0Z0Z
+3
+M0Z0Z0ZN
+2
+POPOPOPO
+1
+S0AQJBZR
+
+rmblkans
+ZpopopZp
+6
+0Z0Z0Z0Z
+5
+o0Z0Z0o0
+4
+0Z0Z0Z0Z
+3
+M0Z0Z0ZN
+2
+POPOPOPO
+1
+S0AQJBZR
+
+rmblkans
+ZpopopZp
+6
+0Z0Z0Z0Z
+5
+o0Z0Z0o0
+4
+0Z0Z0Z0Z
+3
+M0Z0Z0Z0
+2
+POPOPOPO
+1
+ZRAQJBMR
+
+rmblkans
+Zpopopop
+6
+0Z0Z0Z0Z
+5
+Z0Z0Z0Z0
+4
+pZ0Z0Z0Z
+3
+M0Z0Z0Z0
+2
+POPOPOPO
+1
+ZRAQJBMR
+
+8
+
+8
+
+8
+
+8
+
+8
+
+7
+
+7
+
+7
+
+7
+
+7
+
+a
+
+b
+
+c
+
+d
+
+e
+
+f
+
+g
+
+h
+
+1. Nc3 g5 2. Nh3 d5
+A
+
+rmblkans
+Zpopopop
+6
+0Z0Z0Z0Z
+5
+Z0Z0Z0Z0
+4
+pZ0Z0Z0Z
+3
+M0Z0Z0ZN
+2
+POPOPOPO
+1
+S0AQJBZR
+
+a
+
+b
+
+c
+
+d
+
+e
+
+f
+
+g
+
+h
+
+1. Na3 g5 2. Nh3 d5
+
+rmblkans
+opopopo0
+6
+0Z0Z0Z0Z
+5
+Z0Z0Z0Z0
+4
+0Z0Z0Z0o
+3
+M0Z0Z0ZN
+2
+POPOPOPO
+1
+S0AQJBZR
+
+a
+
+b
+
+c
+
+d
+
+e
+
+f
+
+g
+
+h
+
+1. Na3 g5 2. Nh3 a5
+
+rmblkans
+opopopo0
+6
+0Z0Z0Z0Z
+5
+Z0Z0Z0Z0
+4
+0Z0Z0Z0o
+3
+Z0M0Z0ZP
+2
+POPOPOPZ
+1
+S0AQJBMR
+
+a
+
+b
+
+c
+
+d
+
+e
+
+f
+
+g
+
+h
+
+1. Na3 g5 2. Rb1 a5
+
+rmbZkans
+opopZpop
+6
+0Z0Z0Z0Z
+5
+Z0Z0o0Z0
+4
+0Z0Z0Z0l
+3
+Z0M0Z0ZP
+2
+POPOPOPZ
+1
+S0AQJBMR
+
+a
+
+8
+
+8
+
+8
+
+8
+
+7
+
+7
+
+7
+
+7
+
+7
+
+a
+
+b
+
+c
+
+d
+
+e
+
+f
+
+g
+
+h
+
+a
+
+b
+
+c
+
+d
+
+e
+
+f
+
+g
+
+h
+
+1. Na3 h5 2. Nh3 h4
+
+a
+
+b
+
+c
+
+d
+
+e
+
+f
+
+g
+
+h
+
+1. Nc3 h5 2. h3 h4
+
+a
+
+b
+
+c
+
+d
+
+e
+
+f
+
+g
+
+h
+
+1. Nc3 e5 2. h3 Qh4
+
+c
+
+d
+
+e
+
+f
+
+g
+
+h
+
+rmbZkans
+opopZpop
+0Z0Z0Z0Z
+5
+Z0Z0o0Z0
+4
+0Z0Z0Z0l
+3
+Z0Z0ZNZP
+2
+POPOPOPZ
+1
+SNAQJBZR
+
+8
+
+1. Na3 a5 2. Nh3 a4
+
+b
+
+1. Na3 a5 2. Rb1 a4
+
+6
+
+a
+
+b
+
+c
+
+d
+
+e
+
+f
+
+g
+
+h
+
+1. Nf3 e5 2. h3 Qh4
+B
+
+Figure 5: Sequence of positions illustrating the connectivity between the two positions in Figure 1. Circles
+mark squares that the opponent knows are occupied by some piece, but not by which piece. A full explanation
+is given in the text.
+
+C.2
+
+Mixed strategies
+
+Playing a mixed strategy is a fundamental part of strong play in almost any imperfect information game, and
+it is particularly important in games like FoW chess where there is no private information assigned by chance,
+such as private cards in poker. Indeed, in small poker endgames, deterministic strategies exist for playing
+near-optimally [15]. However, in FoW chess, if a player plays a pure strategy that the opponent knows, the
+opponent would essentially be playing regular chess, because the opponent can predict with full certainty
+what the player would play. This is a significant disadvantage that will result in a rapid loss against any
+competent opponent.
+Consider, for example, the position in Figure 6A. White can win almost a full pawn (in expectation) by
+mixing between the moves 2. Qa4 with low probability and 2. Nc3 with high probability. No move for Black
+simultaneously defends the threats against both the king and the pawn. (2... c6 may look like it does, but
+after 3. cxd5, Black cannot recapture the pawn without risking hanging a king or queen.)28
+This necessity of playing a mixed strategy explains why we do not adopt full purification of our strategy and
+instead opt to allow mixing.
+
+C.3
+
+First-mover advantage
+
+We evaluated the first-mover advantage in FoW chess by running 10,000 games with Obscuro playing against
+itself at a time control of 5 seconds per move. Of these games, White scored 57.5% (+4935 =1623 -3442).
+This is, with statistical significance (z > 5), larger than the empirical first-move advantage in regular chess,
+which is about 55% [2]. We believe that the fundamental reason for this discrepancy is the weakness of the
+a4-e8 diagonal, as already exhibited in Figure 6A, discussed above. This risk presents Black from developing
+in a natural manner against 1. c4 or 1. d4, allowing White a healthy opening lead.
+Indeed, our 10,000-game sample included 10 games with length 12 ply (6 moves from each player) or fewer;
+all 10 of these games ended with either Black failing to cover Qa4+ or White failing to cover Qa5+:
+28Obscuro prefers to also include 3. Nf3 and 3. e3 in its mixed strategy to dissuade 2... d4.
+
+20
+
+rmblkans
+opo0opop
+6
+0Z0Z0Z0Z
+5
+Z0ZpZ0Z0
+4
+0ZPZ0Z0Z
+3
+Z0Z0Z0Z0
+2
+PO0OPOPO
+1
+SNAQJBMR
+
+rZbZkZ0s
+opZ0lpop
+6
+0Zno0m0Z
+5
+Z0o0Z0Z0
+4
+QZ0Z0A0Z
+3
+Z0O0Z0Z0
+2
+PO0ZPOPO
+1
+S0Z0JBMR
+
+0Z0jbZQZ
+ZpZ0ZqZ0
+6
+nO0ZpM0Z
+5
+Z0ZpO0Z0
+4
+0Z0O0Z0Z
+3
+Z0Z0Z0Z0
+2
+0Z0Z0O0J
+1
+Z0Z0Z0Z0
+
+0Z0Z0Z0Z
+Z0ZrZkZ0
+6
+0ZpZbopZ
+5
+o0A0Z0Zp
+4
+0m0Z0O0Z
+3
+ZPZ0Z0O0
+2
+0Z0Z0Z0O
+1
+Z0Z0SBJ0
+
+8
+
+8
+
+8
+
+8
+
+7
+
+7
+
+7
+
+7
+
+a
+
+b
+
+c
+
+d
+
+e
+
+f
+
+g
+
+h
+
+a
+
+A
+
+b
+
+c
+
+d
+
+e
+
+f
+
+g
+
+h
+
+a
+
+b
+
+c
+
+d
+
+B
+
+e
+
+f
+
+g
+
+h
+
+a
+
+b
+
+c
+
+d
+
+C
+
+e
+
+f
+
+g
+
+h
+
+D
+
+Figure 6: FoW chess positions from actual gameplay illustrating common themes. (A) Opening position
+after the common trap 1. c4 d5?! (B) An early-game bluff. White bluffs that its attacking bishop is
+defended by the queen on d1. (C) A highly-risky queen maneuver from a losing position. (D) An endgame
+position in which the disadvantaged side sacrifices material for a chance at the opposing king. Details can be
+found in the text.
+White
+d4 66.4%
+c4 29.6%
+e4
+1.9%
+Nc3
+1.4%
+c3
+0.4%
+Nf3
+0.2%
+
+Black
+Nc6 32.5%
+c6 25.1%
+e6 20.7%
+Nf6 15.9%
+c5
+4.8%
+d5
+0.9%
+
+Table 1: Distribution of first moves played by Obscuro as both White and Black, over a 10,000-game sample.
+Percentages may not add up to 100% due to rounding.
+• 1. c4 d5 2. Qa4+ d4 1-0
+• 1. c4 c6 2. d4 d5 3. cxd5 Qa5+ 4. Qa4 0-1
+• 1. c4 Nc6 2. d4 d5 3. Qa4 dxc4 4. d5 Nb8 1-0
+• 1. d4 c6 2. c4 d5 3. cxd5 Bf5 4. Qa4 cxd5 1-0 (This play-through occurred three times.)
+• 1. d4 c6 2. c3 e6 3. e4 d5 4. e5 c5 5. Qa4+ cxd4 1-0
+• 1. c4 e6 2. d4 c5 3. d5 Qa5+ 4. Nd2 Nf6 5. e4 Nxe4 6. Nxe4 0-1
+• 1. d4 c6 2. Nc3 d5 3. Qd3 Nf6 4. e4 dxe4 5. Nxe4 Qa5+ 6. Nxf6+ 0-1
+• 1. c4 d5 2. Qa4+ c6 3. cxd5 Nf6 4. dxc6 Nxc6 5. Nf3 e5 6. Nxe5 Nxe5 1-0
+These games may seem like they contain major mistakes, but that is not so. It is rather likely that most or
+all of these play-throughs are part of optimal play: after all, bluffs must sometimes get called!
+In Table 1 we give Obscuro’s mixed strategy on the first move for both White and Black, over the 10,000-game
+sample. The above observation about the a4-e8 diagonal has a large effect on opening choices. We believe
+that this explains why White strongly prefers opening with d4 and c4 rather than e4 which is equally favored
+in regular chess, and why Black almost never opens with d5 and instead prefers to immediately close the
+dangerous diagonal by moving something to c6.
+
+C.4
+
+Bluffs
+
+Obscuro bluffs. An example bluff is in Figure 6B, which is from the aforementioned 10,000-game sample.
+White knows that d6 is defended (in fact, White knows the exact position). Black does not know the location
+
+21
+
+of the white queen (for example, it could be on d1 instead). This allows White to play Bxd6, exploiting the
+fact that Black cannot recapture without risking losing the queen.
+
+C.5
+
+Probabilistic tactics and risk-taking
+
+The existence of hidden information in FoW chess allows tactics that would not work in regular chess. An
+example of this phenomenon as early as move 2 has already been described above, where mixing allows White
+to win a pawn after 1. c4 d5. We now give additional examples.
+Figure 6C depicts a position encountered during our 20-game match against the top-rated human. Obscuro
+(White) was in a losing position, down a minor piece. It decided to play the highly risky queen maneuver
+Qg8-g1-a1-a7-a8, leaving its own king exposed in order to attempt to hunt the opposing king. This risky
+tactic worked: the game played out 68. Qg1 Qe7 69. Qa1 Nb8 70. Qa7 Nd7 71. Qa8+ Nxb6 1-0.29
+This sequence of moves heavily exploits the opponent’s imperfect information: if Black knew that White
+was attempting this attack, Black could easily either defend the attack or launch a counterattack on the
+completely undefended white king.
+For another example, consider the position in Figure 6D, again from the aforementioned 10,000-game sample,
+and suppose for the sake of the example that White has perfect information. White faces a slight material
+disadvantage in an endgame. However, Obscuro as White finds the tactical blow 1. Rxe6! Kxe6 upon
+which mixing evenly between 2. Bc4+ and 2. Bh3+ wins on the spot with 50% probability.
+
+C.6
+
+Exploitative vs. equilibrium play
+
+The position in Figure 6D is also an example of the difference between exploitative play and equilibrium play
+in FoW chess. The above tactic has expected value at least 50% against any player, because it wins on the
+spot with probability at least 50%. It is likely the best move if playing against a perfect opponent. However,
+against a substantially weaker player, it may be far from the best move: against a weak player, one can argue
+that the endgame is probably a win even with the slight material disadvantage, whereas the tactic will lead
+to a significant disadvantage (down three points of material) if it fails to win. Therefore, if one knew the
+strength of one’s opponent, one may opt to not go for this tactic and instead attempt to win the endgame in
+a “safer” manner. Another example of this phenomenon was also seen above. Obscuro, with small probability,
+can lose in two moves (1. c4 d5 2. Qa4+ d4). Any player, no matter how weak, can therefore beat Obscuro
+with positive probability as White by simply playing the above move sequence. However, against opponents
+below a certain level, playing the above moves as Black may be considered a needless risk.
+Obscuro does not know or attempt to model the opponent. It will simply play what it believes to be
+a near-equilibrium strategy. Therefore, it may not do as well against weak players as an agent designed
+specifically to exploit weak players. This design choice was intentional, and follows other efforts in superhuman
+game-playing AI such as those mentioned in the introduction, most of which attempted to find and play
+equilibria rather than to exploit a particular opponent.
+
+C.7
+
+Volatility
+
+FoW chess is a highly volatile, highly stochastic game. Indeed, the previous two observations regarding
+risk taking and exploitative play are evidence of this. Most games, including a majority of our 20 games
+against the world #1 player, are ultimately decided by one side outright “blundering material” because
+of lack of knowledge of the opponent’s position. We emphasize, however, that this is not a sign of poor
+quality of play; rather, we believe that strong play in FoW chess involves calculated risk-taking that, with
+nontrivial probability, leads to such “blunders”. More skilled players are better at taking calculated risks
+while restricting the probability of losing material, and at forcing their opponents into more risky situations.
+29 The immediate 70.
+
+Qa8 would have worked in this position as well, but it was not played, likely because it would have
+risked losing the queen in case the king were on b8.
+
+22
+
+C.8
+
+King vs King
+
+To make some of the above discussions about mixing, volatility, and equilibrium play more concrete, we
+include here a partial analysis of the king-vs-king endgame, assuming the starting positon of the kings is
+common knowledge. While this endgame is an immediate draw in the rules of regular chess (because a
+lone king cannot checkmate), FoW chess allows such endgames to play out, and not all such endgames are
+immediately drawn; in fact, the analysis turns out rather intricate already. In the below discussion, 0 is a
+draw, +1 is a certain win for White, and −1 is a certain win for Black.
+Claim 1. Suppose that there are two legal moves for the black king that are 1) guaranteed to be safe (i.e., do
+not put our king next to the opponent’s king), and 2) adjacent to each other. Then Black secures at least a
+draw.
+Proof. Black randomly moves to one of them on their first move, and shuffles between them forever thereafter.
+The white king cannot approach without being captured half of the time.
+Thus, it remains only to discuss the case where one king is on the edge of the board. Assume, without loss of
+generality, that this is the black king, and that it is on the 8th rank.
+Claim 2. If the white king prevents the black king from immediately moving off the back rank (e.g., a6 and
+a8), the equilibrium value is strictly positive, regardless of which side is to move.
+Proof. We will show that Black has no strategy that achieves expected value 0. Consider two cases.
+Case 1. Black’s strategy involves attempting to move off the back rank with positive probability on some
+move t (but not earlier). Then consider the following strategy for White. Let x7 (for x ∈ {a, b, ..., h}) be
+the square on the 7th rank with maximal probability p > 0 for the black king after t moves. White places its
+king on square x6 before Black’s tth move. With probability p, White wins immediately. Otherwise, White
+runs away downwards, executing the strategy from Claim 1, forcing a draw.
+Case 2. Black’s strategy is to always stay on the back rank. Then consider the following strategy for White.
+Let x8 be the square on the back rank with minimal probability q ≤ 1/4 for the black king, at the time when
+White makes its 8th move. White places its king on x7 on its 8th move, then moves left and right on the 7th
+rank until it wins. We claim that White has expected value at least 1 − 2q = 1/2 with this strategy. To see
+this, note that, since Black always stays on the back rank, the parity of its rank alternates between moves;
+therefore, if the black king is not on x8, then White will not lose on its 8th move. Further, also by a parity
+argument, White will eventually chase down the black king and win the game.
+If the black king is on the edge of the board, it is always the case that either White can force the kings to be
+two squares apart with common knowledge (Claim 2) or Black has a safe pair of adjacent moves (Claim 1),
+so this completes the analysis.
+We complete this section by pointing out an interesting special case: If the black king starts in the corner
+(a8), the white king starts on either b6, c7, or c6, and it is White to move, then White can secure value
+strictly larger than 1/2: randomize between Kb6, Kc7, Ka6, or Kc8 (whichever are legal moves) on the
+first move. This wins with probability 1/2 immediately, and otherwise immediately forces the kings to be two
+squares apart (Claim 2).
+
+D
+
+Ablations and further experiments
+
+In addition to the experiments described earlier in this paper, we conducted multiple experiments with
+Obscuro as follows. In each of these experiments, we turned off one or more of the new techniques introduced
+in this paper in order to evaluate the contributions of the different techniques to the performance of Obscuro.
+All ablations were run at a time control of 5 seconds per move. Recall from the body of this paper that
+Obscuro with all techniques turned on scored 85.1% against ZS21 and 80% against the top human.
+
+23
+
+1. Purification off. This version allowed mixing among all stable actions, even if the current margin is
+negative or there are more than three of them.
+In a 1,000-game match, Obscuro scored 70.2% (+662 =79 -259).
+2. KLUSS off. In this version, the strategies in infosets not touching our infoset were frozen, as in 1-KLSS.
+In a 1,000-game match, Obscuro scored 58.0% (+532 =96 -372).
+3. Non-uniform Resolve distribution off. In this version, when using Resolve, the distribution over root
+nodes is set uniformly to αJ = 1/m, as in ZS21 [42].
+In a 10,000-game match, Obscuro scored 53.3% (+4595 =1478 -3927).
+4. One-sided GT-CFR off. In this version we use the two-sided node expansion algorithm proposed by the
+original GT-CFR paper [34].
+In a 10,000-game match, Obscuro scored 53.3% (+4535 =1583 -3882).
+5. Two-sided GT-CFR only, against ZS21. In this ablation, we turned off all the above improvements 1,
+2, 3, and 4, and matched the resulting agent against that of ZS21. This serves to isolate the effect of
+using GT-CFR compared to using the LP-based equilibrium computation and iterative deepening node
+expansion as in ZS21.
+In a 1,000-game match, the GT-CFR version scored 72.6% (+711 =30 -259).
+All results are highly statistically significant (z > 5). The results suggest that each improvement played a
+significant role in the improvement of Obscuro over the previous state-of-the-art AI.
+
+E
+
+Further experiments
+
+Finally, we conducted several other experiments to test different properties of Obscuro.
+1. Weaker evaluation function. To test the impact of the evaluation function, we hand-crafted a simple
+evaluation function that takes into account only the material difference and number of squares visible
+to each player. We substituted this evaluation function in place of Stockfish 14’s neural network-based
+evaluation function, creating a new agent that we call simple-eval Obscuro. This evaluation function is
+very simplistic, and would not be well-suited to regular chess. We tested simple-eval Obscuro against
+both Obscuro and ZS21.
+In a 1,000-game match, Obscuro scored 81.9% (+787 =63 -150) against simple-eval Obscuro.
+In a 10,000-game match, simple-eval Obscuro scored 55.0% (+5258 =486 -4256) against ZS21.
+This experiment shows that the evaluation function has a significant impact on the performance of
+Obscuro. Yet, the search algorithm is also vital: even a simplistic evaluation function with our improved
+search techniques is enough to be superior to ZS21.
+2. Random agent. As a sanity check, we also tested Obscuro against a random opponent.30
+In a 1,000-game match, Obscuro scored 100% (+1000 =0 -0).
+3. Time scaling. To test the effect of the time limit on the performance of Obscuro, we tested versions of
+Obscuro with different time limits against each other. The results were as follows. All matches consisted
+of 10,000 games.
+1
+Obscuro with 18 s/move scored 56.4% (+5162 =943 -3895) against Obscuro with 16
+s/move.
+
+Obscuro with 41 s/move scored 56.5% (+5031 =1231 -3738) against Obscuro with 18 s/move.
+30 The only realistic way for Obscuro to lose to a random opponent is by not defending against Qa4+ or Qa5+ in the opening
+as previously discussed, which happens with only very small probability. As previously discussed, occasionally losing to a weak
+(here, random) player would not in itself evidence that Obscuro is playing suboptimally, since even an exact equilibrium player
+should lose to a random player with positive probability.
+
+24
+
+Obscuro with 12 s/move scored 56.7% (+4923 =1503 -3574) against Obscuro with 14 s/move.
+Obscuro with 1 s/move scored 54.0% (+4617 =1566 -3817) against Obscuro with 12 s/move.
+Obscuro with 2 s/move scored 53.7% (+4589 =1561 -3850) against Obscuro with 1 s/move.
+Obscuro with 4 s/move scored 52.3% (+4463 =1530 -4007) against Obscuro with 2 s/move.
+Obscuro with 8 s/move scored 52.4% (+4501 =1482 -4017) against Obscuro with 4 s/move.
+Obscuro with 16 s/move scored 52.3% (+4448 =1563 -3989) against Obscuro with 8 s/move.
+These results, converted to the standard Elo scale, are visualized in Figure 7. As expected and in line with
+known results for other settings (e.g., for regular chess [36]), increasing search time has a significant impact
+on playing strength, but with diminishing returns.
+
+Figure 7: Visualization of time scaling of Obscuro. The y-axis is relative to the playing strength of Obscuro
+with 5 seconds per move.
+
+25
+
+1: maintain
+2:
+current game tree Γ (initially containing only the root ∅)
+3:
+current strategy profile (x, y)
+4:
+current expected value v ∗
+5:
+current set of possible positions P (initially containing only the root ∅)
+6: procedure Move(observation sequence o)
+7:
+ConstructSubgame(o)
+8:
+in parallel
+9:
+10:
+11:
+12:
+13:
+14:
+15:
+16:
+17:
+18:
+19:
+20:
+21:
+22:
+
+RunSolverThread()
+RunExpanderThread() ▷ or multiple parallel copies of expansion thread
+I ← our current infoset
+a∗ ← argmaxa∈A(I) π(a|I) ▷ ties broken arbitrarily
+if pmax = 0 then ▷ If using Resolve, just play a∗ , i.e., purify completely.
+S ← set of stable actions ∪ {a∗ } ▷ “Stable” is defined in the text.
+if |S| > MaxSupport then ▷ The parameter MaxSupport is set to 3.
+remove all but the top MaxSupport most likely actions in S
+πplay (·|I) ← π(·|I)
+for action a ∈ A(h) \ S do ▷ Shift all mass of such actions onto a∗ .
+πplay (a∗ |I) ← πplay (a∗ |I) + πplay (a|I)
+πplay (a|I) ← 0
+sample a∗ ∼ π(·|I)
+play action a∗
+Figure 8: Pseudocode, Part 1.
+
+26
+
+1: procedure ConstructSubgame(observation sequence o)
+2:
+▷ The set of possible positions is updated on every move by simply enumerating
+3:
+▷
+all possibilities
+4:
+5:
+6:
+7:
+8:
+9:
+10:
+11:
+12:
+13:
+14:
+15:
+16:
+17:
+18:
+19:
+20:
+21:
+22:
+23:
+24:
+25:
+
+P ← all positions consistent with o
+I ← set of nodes in Γ consistent with o
+▷ Construct KLUSS subgame:
+for each opponent infoset J ⊆ I 2 do
+set alternate value v alt (J) ← u(x, y|J) − ĝ(J)
+while |I| < min{|P |, MinInfosetSize} do ▷ Add more states to I if there are not enough.
+▷ The parameter MinInfosetSize is set to 256.
+get random state s ∈ P \ I
+▷ Assume ▼ has perfect information at newly-sampled states:
+add s to ▲-infoset I and ▼-infoset J = {s}
+set alternate value v alt (J) ← min{ṽ▲ (s), v ∗ }
+▷ Fix prior probabilities:
+J0 ← {J : J ⊆ I 2 }
+
+
+for each opponent infoset J ⊆ I 2 do set prior probability α(J) ← 21
+
+P y(J) ′ + 1
+m
+J ′ y(J )
+
+create new root node ∅ where ▼ selects infoset J ∈ J0 , reaching node hJ
+▷ π−i (h) is the probability that all other players play all actions on the path to h in Γ.
+for each J ∈ J0 do
+make hJ a chance node where h ∈ J is selected w.p. ∝ π−▼ (h)
+make new regret minimizer RJ with strategy space [0, 1] using PRM+
+▷ Regret minimizer RJ controls the probability with which ▼ enters at J in Resolve.
+Γ ← game tree with root ∅
+delete all game tree nodes not reachable from ∅
+Figure 9: Pseudocode, Part 2.
+
+27
+
+1: procedure RunSolverThread
+2:
+while time permits do ▷ Run for longer than expander threads.
+3:
+RunCFRIteration(▲)
+4:
+5:
+6:
+7:
+8:
+9:
+10:
+11:
+12:
+13:
+
+RunCFRIteration(▼)
+▷ Special case, must be done separately: RM+ updates for the Resolve subgame:
+for each J ∈ J0 do perform regret minimizer update at RJ with utility ucf
+▼ (J)
+▷ Transition between Resolve and Maxmargin smoothly,
+▷
+based on whether Resolve chooses to enter at any infoset J:
+resolve
+▷ π▼
+(J) is the probability that Resolve (RJ ) enters at J.
+maxmargin
+▷ π▼
+(J) is the probability Maxmargin picks J.
+resolve
+pmax ← maxJ∈J0 π▼
+(J)
+maxmargin
+resolve
+for each J ∈ J0 do π▼ (J) ← pmax · α(J) · π▼
+(J) + (1 − pmax ) · π▼
+(J)
+P
+▷ Note: it is possible for J∈J0 π▼ (J) ̸= 1 if Resolve is being used!
+
+14:
+15: procedure RunCFRIteration(exploring player i)
+16:
+MakeUtilities(i, ∅) ▷ MakeUtilities will mark some infosets Visited.
+17:
+18:
+19:
+20:
+21:
+22:
+23:
+24:
+25:
+26:
+
+▷ ucf
+▼ (J) is ▼’s CFV for picking J at the root.
+if i = ▼ then
+alt
+cf
+for each J ∈ J0 do ucf
+▼ (J) ← u▼ (J) + v (J)
+for each Visited infoset I, in bottom-up order do
+▷ πi is player i’s strategy. σ(I) is the parent sequence of infoset I.
+▷ CFR value backpropagation:
+P
+cf
+cf
+ucf
+i (σ(I)) ← ui (σ(I)) +
+a∈A(I) πi (a|I)ui (I, ·)
+perform regret minimizer update at I using counterfactual values ucf
+i (I, ·)
+mark I not Visited
+ucf
+i (I, ·) ← 0 ▷ reset
+Figure 10: Pseudocode, Part 3.
+
+1: procedure MakeUtilities(exploring player i, node h)
+2:
+mark h as not New
+3:
+if h is not Expanded or h is terminal then
+4:
+(I, a) ← σi (h)
+5:
+mark I as Visited
+6:
+▷ ṽi (h) is the Stockfish evaluation or terminal node value of h from i’s perspective.
+7:
+8:
+9:
+10:
+11:
+12:
+13:
+
+▷ ucf
+i (I, a) stores the CFV at sequence (I, a). Initialized to 0.
+cf
+ucf
+i (I, a) ← ui (I, a) + π−i (h)ṽi (h)
+else
+▷ No need to explore nodes to which the opponent does not play.
+▷ No locks needed: all Expanded nodes are safe to access.
+for each legal action a at h do
+if i plays at h or π−i (ha) > 0 then MakeUtilities(i, ha)
+Figure 11: Pseudocode, Part 4.
+
+28
+
+1: procedure RunExpanderThread
+2:
+while time permits do
+3:
+DoExpansionStep(▲)
+4:
+DoExpansionStep(▼)
+5:
+6: procedure DoExpansionStep(exploring player i)
+7:
+h ← root node of current subgame Γ
+
+21:
+22:
+23:
+24:
+25:
+26:
+
+while h is Expanded do ▷ Find leaf to expand.
+▷ Terminal nodes cannot be expanded.
+▷ Also, we should expand nodes that CFR has not yet iterated on.
+if h is terminal or h is New then return
+▷ Select action:
+▷ π̃i is the expansion strategy of player i as defined in the text.
+for action a ∈ A(h) do
+if h belongs to i then π̃(a|h) ← π̃i (a|h)
+else π̃(a|h) ← π−i (a|h)
+▷ If h = ∅ and ▼ is using Resolve, π̃(·|h) may not be a distribution
+sample a ∈ A(h) w.p. ∝ π̃(·|h)
+h ← ha
+▷ Expand h:
+j ← active player at ha
+add all children of h to Γ
+let I be the infoset that h should be in
+if I is not created then
+create I
+initialize current strategy as πj (a∗ |I) = 1 where a∗ := argmaxa∈A(h) ṽj (ha)
+
+27:
+28:
+
+add h to I
+mark h as Expanded
+
+8:
+9:
+10:
+11:
+12:
+13:
+14:
+15:
+16:
+17:
+18:
+19:
+20:
+
+Figure 12: Pseudocode, Part 5.
+
+29
+
+
