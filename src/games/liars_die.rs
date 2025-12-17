@@ -32,8 +32,8 @@ impl PartialOrd for LiarsDieAction {
 }
 #[derive(Clone, Eq, PartialEq, Debug, Default, Hash)]
 pub struct LiarsDieTrace {
-    bet_history: Vec<LiarsDieAction>,
-    my_dice: Vec<Die>
+    pub bet_history: Vec<LiarsDieAction>,
+    pub my_dice: Vec<Die>
 }
 impl PartialOrd for LiarsDieTrace {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
