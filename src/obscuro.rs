@@ -58,7 +58,8 @@ impl<G: Game> Obscuro<G> {
         // Find all root histories
 
         let mut positions = self.pop_histories(hist.clone(), player);
-        Self::populate_histories(&mut positions, hist, player);
+        let v_star = self.expectation; // Previous search expectation
+        Self::populate_histories(&mut positions, hist, player, v_star);
 
         // Renormalize all the histories to sum to 1.0 (probability of being in this subgame)
         let total_prob = positions.iter().map(|(_, (prob, _, _))| *prob).sum::<Probability>();
@@ -92,10 +93,18 @@ impl<G: Game> Obscuro<G> {
             .fold(HashMap::new(), |mut map, history| {
                 let trace = history.trace();
                 let my_prob = history.net_reach_prob();
-                let info_expectation = match history {
+                
+                // Compute u(x,y|J) - the expected value under current strategies
+                let info_expectation = match &history {
                     History::Expanded {..} => self.info_sets[&trace].borrow().policy.expectation(),
-                    History::Terminal {payoff,..} | History::Visited {payoff,..} => payoff,
+                    History::Terminal {payoff,..} | History::Visited {payoff,..} => *payoff,
                 };
+                
+                // Compute gift value ĝ(J) = sum of positive counterfactual advantages along path
+                let gift_value = Self::compute_gift_value(&history, player);
+                
+                // Alternate value: v_alt(J) = u(x,y|J) - ĝ(J)
+                let alt_value = info_expectation - gift_value;
 
                 match map.entry(trace) {
                     Entry::Occupied(mut entry) => {
@@ -104,14 +113,47 @@ impl<G: Game> Obscuro<G> {
                         vec.push(history);
                     }
                     Entry::Vacant(entry) => {
-                        entry.insert((my_prob, info_expectation, vec![history]));
+                        entry.insert((my_prob, alt_value, vec![history]));
                     }
                 }
                 map
             });
         positions
     }
-    fn populate_histories(positions: &mut HashMap<G::Trace, PreResolver<G>>, hist: G::Trace, player: Player) {
+    
+    /// Compute gift value ĝ(J) = Σ [u_cf(x,y; J'a') - u_cf(x,y; J')]_+
+    /// This represents the advantage gained from opponent mistakes leading to J
+    fn compute_gift_value(history: &History<G>, player: Player) -> Reward {
+        match history {
+            History::Terminal { .. } | History::Visited { .. } => 0.0,
+            History::Expanded { info, children, player: hist_player, .. } => {
+                if *hist_player == player.other() {
+                    // At opponent nodes, sum positive counterfactual advantages
+                    let policy = info.borrow();
+                    let current_value = policy.policy.expectation();
+                    
+                    let mut gift = 0.0;
+                    for (_action, child) in children.iter() {
+                        let child_value = child.payoff();
+                        let advantage = (child_value - current_value).max(0.0);
+                        gift += advantage;
+                        
+                        // Recursively add gifts from descendants
+                        gift += Self::compute_gift_value(child, player);
+                    }
+                    gift
+                } else {
+                    // At our nodes or chance nodes, just sum recursively
+                    let mut gift = 0.0;
+                    for (_, child) in children.iter() {
+                        gift += Self::compute_gift_value(child, player);
+                    }
+                    gift
+                }
+            }
+        }
+    }
+    fn populate_histories(positions: &mut HashMap<G::Trace, PreResolver<G>>, hist: G::Trace, player: Player, v_star: Reward) {
         let mut data_count = positions.len();
         let mut new_positions = G::sample_position(hist.clone());
         let other = player.other();
@@ -128,7 +170,12 @@ impl<G: Game> Obscuro<G> {
                 println!("Constructing new position: {:?}", g);
                 let s = History::new(g.clone(), HashMap::new());  // Start with probability 1.0 (relative to its root)
                 let opp_trace = g.trace(other);
-                let alt = g.evaluate();  // TODO: idk how the predeal is evaluated & how that affects bounds
+                
+                // For newly-sampled states, alternate value is min(stockfish_eval, v*)
+                // where v* is the expected value from previous search
+                let stockfish_eval = g.evaluate();
+                let alt = stockfish_eval.min(v_star);
+                
                 positions
                     .entry(opp_trace)
                     .or_insert( (1.0, alt, vec![]))
@@ -464,9 +511,21 @@ impl<G: Game> SubgameRoot<G> {
         j0: HashMap<G::Trace, PreResolver<G>>,
         player: Player,
     ) -> Self {
-        // Prior for each J node = given probability (already normalized upstream if desired)
+        // Compute prior probabilities α(J) = 1/2 * (1/m + y(J)/Σy(J'))
+        // where m is the number of opponent infosets and y(J) is opponent's strategy probability
+        let m = j0.len() as Reward;
+        let mut y_values: Vec<(G::Trace, Reward)> = Vec::new();
+        
+        // Collect y(J) values (prior probabilities from belief distribution)
+        for (trace, (prior_prob, _, _)) in j0.iter() {
+            y_values.push((trace.clone(), *prior_prob));
+        }
+        
+        let sum_y: Reward = y_values.iter().map(|(_, y)| *y).sum();
+        
+        // Prior for each J node using the paper's formula
         let mut items: Vec<ResolverGadget<G>> = Vec::new();
-        for (trace, (_pp, alt, entries)) in j0.into_iter() {
+        for (trace, (prior_prob, alt, entries)) in j0.into_iter() {
             // Create an augmented gadget that mixes SKIP (alt) vs. ENTER (children)
             let info = Info::from_policy(
                 Policy::from_rewards(
@@ -477,22 +536,29 @@ impl<G: Game> SubgameRoot<G> {
                         .collect(),
                     player,
                 ),
-                trace,
+                trace.clone(),
                 Player::Chance,
             );
             let resolver = Policy::from_rewards(vec![(SKIP, alt), (ENTER, 0.0)], player.other());
+            
+            // Compute α(J) = 1/2 * (1/m + y(J)/Σy(J'))
+            let uniform_component = 1.0 / m;
+            let belief_component = if sum_y > 0.0 { prior_prob / sum_y } else { 0.0 };
+            let alpha_j = 0.5 * (uniform_component + belief_component);
 
             let augmented = ResolverGadget {
                 info,
                 resolver,
                 alt,
-                prior_probability: 1.0, // normalized later if you use it
+                prior_probability: alpha_j,
                 children: entries,
             };
             items.push(augmented);
         }
+        
+        // Create root policy using the computed prior probabilities
         let root_policy = Policy::from_rewards(
-            items.iter().map(|r|r.prior_probability*1.0).enumerate().collect(),
+            items.iter().enumerate().map(|(i, r)| (i, r.prior_probability)).collect(),
             player
         );
 
