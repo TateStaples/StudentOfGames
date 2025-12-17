@@ -16,4 +16,5 @@ pub mod policy;
 pub mod utils;
 pub mod history;
 pub mod obscuro;
+pub mod obscuro_threaded;
 pub mod self_play;
