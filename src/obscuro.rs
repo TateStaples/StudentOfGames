@@ -33,6 +33,11 @@ impl<G: Game> Obscuro<G> {
     pub fn inst_policy(&self, observation: G::Trace) -> Policy<G::Action> {
         self.info_sets[&observation].borrow().policy.clone()
     }
+    
+    /// Train the solver from replay buffer
+    pub fn learn_from(&mut self, replay: ReplayBuffer<G>) {
+        self.solver.learn_from(replay);
+    }
     /// Given a observation, update you understanding of game state & strategy
     pub fn study_position(&mut self, observation: G::Trace, player: Player) {
         // println!("Making move: {:?}, {:?}", player, observation);
@@ -448,6 +453,7 @@ impl<G: Game> Default for Obscuro<G> {
             total_updates: 10,
             info_sets: HashMap::new(),
             subgame_root: root,
+            solver: G::Solver::default(),
             start_time: SystemTime::now(),
         }
     }

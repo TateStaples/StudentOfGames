@@ -34,6 +34,7 @@ impl PartialOrd for TicTacToe {
 }
 impl Game for TicTacToe {
     type State = Self;
+    type Solver = DummySolver;
     type Action = (usize, usize);
     type Trace = Self;
 

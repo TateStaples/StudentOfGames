@@ -44,8 +44,8 @@ fn self_play<G: Game>(GREEDY_DEPTH: i32) -> ReplayBuffer<G> {
         let action = if depth > GREEDY_DEPTH {
             policy.purified()
         } else {
-            let exploring_policy = policy.avg_strategy.iter().map(|x| 0.5 * x + 1.0/(policy.actions.len() as Probability)).collect();
-            let exploring_action = policy.sample_from(exploring_policy);
+            let exploring_policy: Vec<Probability> = policy.avg_strategy.iter().map(|x| 0.5 * x + 1.0/(policy.actions.len() as Probability)).collect();
+            let exploring_action = policy.sample_from(&exploring_policy);
             exploring_action
         };
         println!("Bot({:?}) plays: {:?}", player, action);

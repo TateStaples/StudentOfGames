@@ -44,7 +44,23 @@ pub trait GameSolver<G: Game>: Default {
         (self.score_position(game, player), self.guess_strategy(game, player))
     }
     fn learn_from(&mut self, replay: ReplayBuffer<G>);
-} // Marker trait for solvers
+}
+
+// Default dummy solver for games that don't have a neural network solver
+#[derive(Default)]
+pub struct DummySolver;
+
+impl<G: Game> GameSolver<G> for DummySolver {
+    fn score_position(&self, _game: &G::State, _player: Player) -> Reward {
+        0.0
+    }
+    fn guess_strategy(&self, _game: &G::State, _player: Player) -> Strategy {
+        vec![]
+    }
+    fn learn_from(&mut self, _replay: ReplayBuffer<G>) {
+        // No-op for dummy solver
+    }
+}
 pub trait Game: Sized + Clone + Debug + Hash {
     /// Optional compressed representatino of game state for recovery
     type State: Clone;
