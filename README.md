@@ -1,6 +1,37 @@
 # Student of Games
 A general purpose games solver for imperfect information and stochastic games using a combination of Counterfactural Regret Minimization and AlphaZero
 
+## Quick Start
+
+### Training a Solver
+
+```rust
+use StudentOfGames::training::{Trainer, TrainingConfig};
+use StudentOfGames::games::rps::Rps;
+
+let config = TrainingConfig {
+    iterations: 100,
+    greedy_depth: 10,
+    replay_buffer_size: 1000,
+    checkpoint_frequency: 10,
+};
+
+let mut trainer = Trainer::<Rps>::new(config);
+trainer.train();
+```
+
+See `TRAINING_GUIDE.md` for detailed documentation.
+
+### Running Examples
+
+```bash
+# Train on Rock-Paper-Scissors
+cargo run --example train_example
+
+# Train on AKQ Poker
+cargo run --example akq_training
+```
+
 ## What's implemented
 ### Game
 

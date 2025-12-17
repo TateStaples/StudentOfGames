@@ -20,3 +20,6 @@ pub mod obscuro_threaded;
 pub mod obscuro_parallel;
 pub mod neural_demo;
 pub mod self_play;
+pub mod training;
+pub mod neural;
+pub mod neural_solver;

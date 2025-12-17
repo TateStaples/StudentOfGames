@@ -7,7 +7,7 @@ pub fn student_of_games<G: Game>(iterations: i32, greedy_depth: i32) -> Obscuro<
     let mut solver: Obscuro<G> = Obscuro::default();
     for iter in 0..iterations {
         println!("=== Iteration {} ===", iter);
-        let replay_buffer = self_play::<G>(greedy_depth);
+        let replay_buffer = self_play_with_solver::<G>(greedy_depth, &mut solver);
         solver.learn_from(replay_buffer);
         // solver.debug();
     }
@@ -17,10 +17,10 @@ pub fn student_of_games<G: Game>(iterations: i32, greedy_depth: i32) -> Obscuro<
 const EXPLORATION_WEIGHT: f64 = 0.5;
 
 /// Do self-learning by playing a game against yourself & updating your learning policies
-fn self_play<G: Game>(GREEDY_DEPTH: i32) -> ReplayBuffer<G> {
+/// This version reuses an existing solver for iterative improvement
+pub fn self_play_with_solver<G: Game>(GREEDY_DEPTH: i32, solver: &mut Obscuro<G>) -> ReplayBuffer<G> {
     // Setup
     let mut game = G::new();
-    let mut solver: Obscuro<G> = Obscuro::default();
     solver.study_position(game.trace(Player::P1), Player::P2);
     let mut depth = 0;
     let mut replay_buffer: ReplayBuffer<G> = vec![];
