@@ -1,3 +1,14 @@
+//! # Information Sets (Infosets)
+//!
+//! Represents indistinguishable game states from a player's perspective (infosets).
+//! Multiple game histories can map to the same infoset if the player has the same
+//! private information.
+//!
+//! Contains:
+//! - **Policy**: Action probabilities for this infoset
+//! - **Trace**: Observable history leading to this infoset
+//! - **Reach probabilities**: How likely this infoset is to occur for each player
+
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -17,6 +28,18 @@ pub struct Info<A: ActionI, T: TraceI> {
     pub player: Player,
     pub reach: HashMap<Player, Probability>,
     pub gift_cached: Option<Reward>,
+}
+
+impl<A: ActionI, T: TraceI> Clone for Info<A, T> {
+    fn clone(&self) -> Self {
+        Self {
+            policy: self.policy.clone(),
+            trace: self.trace.clone(),
+            player: self.player,
+            reach: self.reach.clone(),
+            gift_cached: self.gift_cached,
+        }
+    }
 }
 
 impl<A: ActionI, T: TraceI> Info<A, T> {

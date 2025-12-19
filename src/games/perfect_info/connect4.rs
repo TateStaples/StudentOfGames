@@ -2,6 +2,7 @@ use std::cmp::Ordering;
 use std::fmt::Debug;
 use std::iter::{IntoIterator, Iterator};
 use crate::utils::{Game, Player, Reward, TraceI};
+use crate::utils::DummySolver;
 /*
 +----------------------------+
 | 6 13 20 27 34 41 48 55 62 |
@@ -208,7 +209,7 @@ impl Game for Connect4 {
     }
 
     fn active_player(&self) -> Player {
-        if self.height.iter().sum::<u8>()&2==0 {Player::P1} else {Player::P2}
+        if self.height.iter().sum::<u8>() % 2 == 0 {Player::P1} else {Player::P2}
     }
 
     fn available_actions(&self) -> Vec<Self::Action> {
@@ -236,4 +237,73 @@ impl Game for Connect4 {
     fn sample_position(_observation_history: Self::Trace) -> impl Iterator<Item=Self> {
         vec![].into_iter()
     }
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn connect4_new_game() {
+		let g = Connect4::new();
+		assert_eq!(g.active_player(), Player::P1);
+		assert!(!g.is_over());
+	}
+
+	#[test]
+	fn connect4_seven_columns_available() {
+		let g = Connect4::new();
+		let moves = g.available_actions();
+		assert_eq!(moves.len(), 7);
+	}
+
+	#[test]
+	fn connect4_alternates_players() {
+		let g = Connect4::new();
+		assert_eq!(g.active_player(), Player::P1);
+		let g1 = g.play(&0);
+		assert_eq!(g1.active_player(), Player::P2);
+		let g2 = g1.play(&0);
+		assert_eq!(g2.active_player(), Player::P1);
+	}
+
+	#[test]
+	fn connect4_column_fills_up() {
+		let mut g = Connect4::new();
+		for _i in 0..6 {
+			let moves = g.available_actions();
+			g = g.play(&moves[0]);
+		}
+		let moves = g.available_actions();
+		// First column should be full now (filled 6 times)
+		assert!(!moves.contains(&0));
+	}
+
+	#[test]
+	fn connect4_piece_placement() {
+		let g = Connect4::new();
+		let initial_height = g.height[0];
+		let g1 = g.play(&0);
+		let new_height = g1.height[0];
+		assert_eq!(new_height, initial_height + 1);
+	}
+
+	#[test]
+	fn connect4_moves_decrease_as_board_fills() {
+		let g = Connect4::new();
+		let initial_moves = g.available_actions().len();
+		let g1 = g.play(&0);
+		let next_moves = g1.available_actions().len();
+		// Should still have 7 unless first column filled
+		assert!(next_moves <= initial_moves);
+	}
+
+	#[test]
+	fn connect4_evaluation_ongoing() {
+		let g = Connect4::new();
+		let val = g.evaluate();
+		// Should be some value (heuristic-based for ongoing game)
+		// Just verify it doesn't panic
+		let _ = val;
+	}
 }

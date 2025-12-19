@@ -1,3 +1,10 @@
+//! # Neural Network Training
+//!
+//! Utilities for training game-playing neural networks. Handles:
+//! - **Model serialization**: Saving/loading trained weights
+//! - **Batch processing**: Converting game data to training batches
+//! - **State encoding**: Vectorizing game states for neural networks
+
 use crate::utils::*;
 use crate::obscuro::Obscuro;
 

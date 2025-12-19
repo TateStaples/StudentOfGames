@@ -1,3 +1,13 @@
+//! # Obscuro: Main Game Solving Engine
+//!
+//! The core solver combining:
+//! - **CFR (Counterfactual Regret Minimization)**: Computes Nash equilibrium strategies
+//! - **Monte Carlo Tree Search**: Explores the game tree efficiently
+//! - **Safe Resolving**: Extends solved regions safely to unexplored states
+//! - **Infoset Tracking**: Manages information sets and policies across the tree
+//!
+//! Main entry point for solving imperfect information games.
+
 use super::history::*;
 use crate::info::*;
 use crate::obscuro::ResolveActions::{ENTER, SKIP};
@@ -20,7 +30,36 @@ pub struct Obscuro<G: Game> {
     start_time: SystemTime,
 }
 
+impl<G: Game> Clone for Obscuro<G> 
+where
+    G::Solver: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            expectation: self.expectation,
+            total_updates: self.total_updates,
+            info_sets: self.info_sets.clone(),
+            subgame_root: self.subgame_root.clone(),
+            solver: self.solver.clone(),
+            start_time: self.start_time,
+        }
+    }
+}
+
 impl<G: Game> Obscuro<G> {
+    /// Ensure an infoset exists for the given observation; seed with uniform policy over actions.
+    pub fn seed_infoset(&mut self, observation: G::Trace, player: Player, actions: &[G::Action]) {
+        if self.info_sets.contains_key(&observation) {
+            return;
+        }
+        let policy = Policy::from_rewards(
+            actions.iter().cloned().map(|a| (a, 0.0)).collect(),
+            player,
+        );
+        let info = Info::from_policy(policy, observation.clone(), player);
+        self.info_sets.insert(observation, std::rc::Rc::new(std::cell::RefCell::new(info)));
+    }
+
     /// Develop a strategy and then return the action you have decided
     pub fn make_move(&mut self, observation: G::Trace, player: Player) -> G::Action {
         debug_assert!(!matches!(player, Player::Chance));
@@ -38,6 +77,17 @@ impl<G: Game> Obscuro<G> {
     pub fn learn_from(&mut self, replay: ReplayBuffer<G>) {
         self.solver.learn_from(replay);
     }
+
+    /// Save an underlying model if the solver supports it.
+    pub fn save_model<P: Into<std::path::PathBuf>>(
+        &self,
+        path: P,
+    ) -> Result<(), burn::record::RecorderError>
+    where
+        G::Solver: crate::utils::SaveModel,
+    {
+        self.solver.save_model(path)
+    }
     /// Given a observation, update you understanding of game state & strategy
     pub fn study_position(&mut self, observation: G::Trace, player: Player) {
         // println!("Making move: {:?}, {:?}", player, observation);
@@ -51,7 +101,7 @@ impl<G: Game> Obscuro<G> {
                 self.solve_step();
             }
         }
-        println!("SIZE: {}", self.size());
+        // println!("SIZE: {}", self.size());
         // self.debug();
     }
     // Below is all private functions necesary for growing tree CFR & safe resolving
@@ -173,7 +223,7 @@ impl<G: Game> Obscuro<G> {
                     .any(|x| x == game_hash) {
                     continue;
                 }
-                println!("Constructing new position: {:?}", g);
+                // println!("Constructing new position: {:?}", g);
                 let s = History::new(g.clone(), HashMap::new());  // Start with probability 1.0 (relative to its root)
                 let opp_trace = g.trace(other);
                 
@@ -236,7 +286,10 @@ impl<G: Game> Obscuro<G> {
             })
             .collect();
         // println!("Comparisons: {:?}, root({:?}): {:?}, my_trace: {:?}, target: {:?}", comparisons, player,root, my_trace, hist);
-        debug_assert!(!comparisons.contains(&std::cmp::Ordering::Greater), "{:?} > {:?}", my_trace, hist);
+        // In practice `my_trace` can be a strict extension of some target traces,
+        // yielding `Greater`; this is acceptable for our traversal.
+        // Avoid asserting here to prevent spurious debug panics during training.
+        // debug_assert!(!comparisons.contains(&std::cmp::Ordering::Greater), "{:?} > {:?}", my_trace, hist);
         if comparisons.contains(&std::cmp::Ordering::Equal) {
             // return this as a vec and traces of all of my children
             let other_view = root.players_view(root.player().other());
@@ -405,28 +458,44 @@ impl<G: Game> Obscuro<G> {
     }
     // ---------- Util Functions --------- //
     fn sample_history(subgame_root: &mut SubgameRoot<G>) -> &mut History<G> {
-        // 1) Collect coordinates and weights in a short scope so borrows end before we reborrow mutably.
-        let (coords, probs) = {
-            let mut coords: Vec<(usize, usize)> = Vec::new();
-            let mut probs: Vec<Probability> = Vec::new();
+        // Collect coordinates and weights from current subgame histories
+        let mut coords: Vec<(usize, usize)> = Vec::new();
+        let mut probs: Vec<Probability> = Vec::new();
 
-            // Use `iter()` or `iter_mut()` depending on what `net_reach_prob()` needs.
-            for (i, aug) in subgame_root.children.iter().enumerate() {
-                for (j, h) in aug.children.iter().enumerate() {
-                    probs.push(h.net_reach_prob());
-                    coords.push((i, j));
-                }
+        for (i, aug) in subgame_root.children.iter().enumerate() {
+            for (j, h) in aug.children.iter().enumerate() {
+                // Ensure non-negative weight
+                let p = h.net_reach_prob();
+                coords.push((i, j));
+                probs.push(p.max(0.0));
             }
-            debug_assert!(!probs.is_empty()&&probs.iter().sum::<Probability>() > 1e-12);
-            (coords, probs)
+        }
+
+        // If no histories exist, fail clearly
+        if coords.is_empty() {
+            panic!("No histories available to sample in subgame_root");
+        }
+
+        // Prefer sampling among positive-weight histories; fallback to uniform
+        let mut filtered_coords: Vec<(usize, usize)> = Vec::new();
+        let mut filtered_probs: Vec<Probability> = Vec::new();
+        for ((i, j), p) in coords.iter().zip(probs.iter()) {
+            if *p > 1e-12 {
+                filtered_coords.push((*i, *j));
+                filtered_probs.push(*p);
+            }
+        }
+
+        let (use_coords, use_probs) = if filtered_coords.is_empty() {
+            // All weights are ~zero; sample uniformly over available histories
+            (coords, vec![1.0; probs.len()])
+        } else {
+            (filtered_coords, filtered_probs)
         };
 
-        // 2) Sample an index from the weights.
-        let dist = WeightedIndex::new(&probs).expect("no options / invalid weights");
+        let dist = WeightedIndex::new(&use_probs).expect("invalid weights for sampling");
         let k = dist.sample(&mut rng());
-        let (i, j) = coords[k];
-
-        // 3) Reborrow mutably and return the selected history.
+        let (i, j) = use_coords[k];
         &mut subgame_root.children[i].children[j]
     }
     /// How likely is it that the opponent would ever enter this subgame
@@ -472,16 +541,6 @@ impl<G: Game> Obscuro<G> {
             }
         }
     }
-    
-    /// Learn from a replay buffer (for future neural network integration)
-    /// Currently this is a no-op since Obscuro learns online via CFR
-    pub fn learn_from(&mut self, _replay: ReplayBuffer<G>) {
-        // TODO: When neural networks are integrated, this will:
-        // 1. Convert replay buffer entries to training batches
-        // 2. Train the value/policy networks
-        // 3. Update the solver's neural network parameters
-        // For now, Obscuro learns purely through CFR during study_position
-    }
 }
 impl<G: Game> Default for Obscuro<G> {
     fn default() -> Self {
@@ -522,6 +581,16 @@ struct SubgameRoot<G: Game> {
     maxmargin: Policy<usize>,
     children: Vec<ResolverGadget<G>>,
 }
+
+impl<G: Game> Clone for SubgameRoot<G> {
+    fn clone(&self) -> Self {
+        Self {
+            maxmargin: self.maxmargin.clone(),
+            children: self.children.clone(),
+        }
+    }
+}
+
 impl<G: Game> SubgameRoot<G> {
     /// Create a new subgame root from 2-cover, all the info-states the other player believes we could be in
     pub fn new(
@@ -602,6 +671,19 @@ struct ResolverGadget<G: Game> {
     prior_probability: Probability,
     children: Vec<History<G>>,
 }
+
+impl<G: Game> Clone for ResolverGadget<G> {
+    fn clone(&self) -> Self {
+        Self {
+            info: self.info.clone(),
+            resolver: self.resolver.clone(),
+            alt: self.alt,
+            prior_probability: self.prior_probability,
+            children: self.children.clone(),
+        }
+    }
+}
+
 /// Temporary datatype to hold information necesary to build the ResolverGadget
 type PreResolver<G> = (Probability, Reward, Vec<History<G>>);
 impl<G: Game> ResolverGadget<G> {

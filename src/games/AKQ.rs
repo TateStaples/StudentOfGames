@@ -1,3 +1,9 @@
+//! # AKQ Poker (Kuhn's Poker Variant)
+//!
+//! A simplified poker game with three card ranks (A, K, Q) and simple betting.
+//! The game starts with a random dealer, then players play with imperfect information.
+//! This is a classic example in game theory literature and serves as a good test case.
+
 use std::cmp::Ordering;
 use std::fmt::Debug;
 use crate::games::AKQ::AkqAction::{Bet, Call, Deal, Fold};

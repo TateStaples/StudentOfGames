@@ -1,3 +1,8 @@
+//! # Threaded Game Solving
+//!
+//! Thread-based implementation of game solving with synchronized access to shared state.
+//! Provides thread-safe wrapper around the Obscuro solver.
+
 use crate::obscuro::Obscuro;
 use crate::utils::{Game, Player, Reward};
 use crate::policy::Policy;

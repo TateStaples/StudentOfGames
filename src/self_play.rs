@@ -1,6 +1,15 @@
+//! # Self-Play Game Generation
+//!
+//! Generates training data by running games between solver instances or trained agents.
+//! Used to collect experience for neural network training via self-play.
+
 use rand::prelude::IndexedRandom;
 use crate::obscuro::Obscuro;
 use crate::utils::{Game, Player, Probability, ReplayBuffer, Reward};
+
+pub fn is_verbose() -> bool {
+    std::env::var("VERBOSE_SELFPLAY").is_ok()
+}
 
 
 pub fn student_of_games<G: Game>(iterations: i32, greedy_depth: i32) -> Obscuro<G> {
@@ -21,9 +30,16 @@ const EXPLORATION_WEIGHT: f64 = 0.5;
 pub fn self_play_with_solver<G: Game>(GREEDY_DEPTH: i32, solver: &mut Obscuro<G>) -> ReplayBuffer<G> {
     // Setup
     let mut game = G::new();
-    solver.study_position(game.trace(Player::P1), Player::P2);
+    {
+        let observation = game.trace(Player::P1);
+        let actions = game.available_actions();
+        solver.seed_infoset(observation.clone(), Player::P2, &actions);
+        solver.study_position(observation, Player::P2);
+    }
     let mut depth = 0;
-    let mut replay_buffer: ReplayBuffer<G> = vec![];
+    // Collect per-move training records without value; assign terminal return at the end
+    // Store (trace, policy, player_who_moved) to assign correct value sign
+    let mut pending_records: Vec<(G::Trace, Vec<Probability>, Player)> = Vec::new();
     
     // Main loop
     while !game.is_over() {
@@ -35,13 +51,34 @@ pub fn self_play_with_solver<G: Game>(GREEDY_DEPTH: i32, solver: &mut Obscuro<G>
             continue;
         } 
         let observation = game.trace(player);
+        let actions = game.available_actions();
+        solver.seed_infoset(observation.clone(), player, &actions);
         solver.study_position(observation.clone(), player);
         
-        // Update the replay buffer
-        let policy = solver.inst_policy(observation.clone()); 
-        let avg_strat: &Vec<Probability> = &policy.avg_strategy; 
-        let expectation: Reward = policy.expectation();
-        replay_buffer.push((observation.clone(), avg_strat.clone(), expectation));  // Maybe only push random subset
+        // Capture the current decision policy to supervise the policy head
+        // Prefer instantaneous regret-matching distribution as teacher
+        // Also track which player made this decision for correct value target sign
+        let policy = solver.inst_policy(observation.clone());
+        let inst_pi: Vec<Probability> = policy.inst_policy();
+        pending_records.push((observation.clone(), inst_pi.clone(), player));
+        
+        // Verbose output: show bot's state and policy
+        if is_verbose() {
+            let action_count = policy.actions.len();
+            let top_actions: Vec<_> = inst_pi.iter()
+                .enumerate()
+                .map(|(i, &p)| (i, p))
+                .filter(|(_, p)| *p > 0.01)  // Only show actions with >1% probability
+                .collect();
+            
+            eprintln!("  Bot({:?}): {} actions available", player, action_count);
+            eprintln!("    Top policies:");
+            for (idx, prob) in top_actions.iter().take(5) {
+                if let Some(action) = policy.actions.get(*idx) {
+                    eprintln!("      [{:3.1}%] {:?}", prob * 100.0, action);
+                }
+            }
+        }
         
         // Load the action
         let action = if depth > GREEDY_DEPTH {
@@ -55,6 +92,21 @@ pub fn self_play_with_solver<G: Game>(GREEDY_DEPTH: i32, solver: &mut Obscuro<G>
         game = game.play(&action);
         depth += 1;
     }
+    // Game ended: compute terminal return and assign correct sign per player
+    // evaluate() returns value from P1 perspective: +1 if P1 wins, -1 if P2 wins
+    let final_reward_p1: Reward = game.evaluate();
+    let replay_buffer: ReplayBuffer<G> = pending_records
+        .into_iter()
+        .map(|(trace, pi, player_who_moved)| {
+            // If P1 moved, use P1 perspective; if P2 moved, flip sign
+            let value = if player_who_moved == Player::P1 {
+                final_reward_p1
+            } else {
+                -final_reward_p1
+            };
+            (trace, pi, value)
+        })
+        .collect();
     replay_buffer
 }
 

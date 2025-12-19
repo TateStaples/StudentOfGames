@@ -1,3 +1,8 @@
+//! # Neural Network Demo and Testing
+//!
+//! Example and test code demonstrating neural network usage for game evaluation.
+//! Includes performance comparisons and integration tests.
+
 /// Demo of neural network-based solving for Liar's Die with large game trees
 /// 
 /// This demo shows how the neural network can be used to evaluate positions
@@ -26,7 +31,7 @@ pub struct DemoConfig {
 impl Default for DemoConfig {
     fn default() -> Self {
         Self {
-            dice_per_player: 2,  // 2 dice per player = much larger tree
+            dice_per_player: 5,  // 5 dice per player
             solve_time_secs: 5.0,
             use_parallel: true,
             num_threads: 4,

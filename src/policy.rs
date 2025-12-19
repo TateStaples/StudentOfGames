@@ -1,3 +1,13 @@
+//! # Action Policy and Counterfactual Regret Minimization (CFR+)
+//!
+//! Implements CFR+ strategy updates for game-playing agents. Tracks action probabilities,
+//! regrets, and cumulative strategies for imperfect information games.
+//!
+//! Key components:
+//! - **Policy struct**: Maintains regret accumulators and strategy averages
+//! - **CFR+ updates**: Positive regret matching for better convergence
+//! - **Action sampling**: Weighted random sampling based on current strategy
+
 use std::cmp::Ordering;
 use std::fmt::{Debug, Formatter};
 use rand::distr::weighted::WeightedIndex;

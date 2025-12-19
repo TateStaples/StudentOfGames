@@ -12,14 +12,14 @@ fn main() {
         // Run neural network demo
         let config = if args.len() > 1 && args[1] == "parallel" {
             DemoConfig {
-                dice_per_player: 1,
+                dice_per_player: 5,
                 solve_time_secs: 5.0,
                 use_parallel: true,
                 num_threads: 4,
             }
         } else {
             DemoConfig {
-                dice_per_player: 1,
+                dice_per_player: 5,
                 solve_time_secs: 5.0,
                 use_parallel: false,
                 num_threads: 1,

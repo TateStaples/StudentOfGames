@@ -42,8 +42,8 @@ impl Game for TicTacToe {
     fn decode(state: &Self::State) -> Self { state.clone() }
     fn new() -> Self {
         Self { board: vec![
-            vec![None, Some(Player::P2), None],
-            vec![Some(Player::P2), Some(Player::P1), Some(Player::P1)],
+            vec![None, None, None],
+            vec![None, None, None],
             vec![None, None, None],
         ] }
     }
@@ -95,4 +95,76 @@ impl Game for TicTacToe {
     fn sample_position(observation_history: Self::Trace) -> impl Iterator<Item=Self> {
         return vec![observation_history].into_iter();
     }
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn tictactoe_new_game() {
+		let g = TicTacToe::new();
+		assert_eq!(g.active_player(), Player::P1);
+		assert!(!g.is_over());
+		assert_eq!(g.evaluate(), 0.0);
+	}
+
+	#[test]
+	fn tictactoe_nine_opening_moves() {
+		let g = TicTacToe::new();
+		let moves = g.available_actions();
+		assert_eq!(moves.len(), 9);
+	}
+
+	#[test]
+	fn tictactoe_alternating_turns() {
+		let g = TicTacToe::new();
+		let moves = g.available_actions();
+		assert!(moves.len() > 0);
+		let g1 = g.play(&moves[0]);
+		assert_eq!(g1.active_player(), Player::P2);
+		let moves2 = g1.available_actions();
+		let g2 = g1.play(&moves2[0]);
+		assert_eq!(g2.active_player(), Player::P1);
+	}
+
+	#[test]
+	fn tictactoe_board_fills_up() {
+		let mut g = TicTacToe::new();
+		for _i in 0..9 {
+			if g.is_over() { break; }
+			let moves = g.available_actions();
+			if moves.is_empty() { break; }
+			g = g.play(&moves[0]);
+		}
+		// Either game is over or board is full
+		assert!(g.available_actions().is_empty() || g.is_over());
+	}
+
+	#[test]
+	fn tictactoe_move_count_decreases() {
+		let g = TicTacToe::new();
+		let initial_moves = g.available_actions().len();
+		let g1 = g.play(&g.available_actions()[0]);
+		let next_moves = g1.available_actions().len();
+		assert_eq!(next_moves, initial_moves - 1);
+	}
+
+	#[test]
+	fn tictactoe_no_duplicate_moves() {
+		let g = TicTacToe::new();
+		let moves = g.available_actions();
+		let mut seen = std::collections::HashSet::new();
+		for m in moves {
+			assert!(seen.insert(m), "duplicate move found");
+		}
+	}
+
+	#[test]
+	fn tictactoe_sample_position_deterministic() {
+		let g = TicTacToe::new();
+		let trace = g.trace(Player::P1);
+		let samples: Vec<_> = TicTacToe::sample_position(trace.clone()).collect();
+		assert_eq!(samples.len(), 1);
+	}
 }

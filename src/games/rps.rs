@@ -1,3 +1,8 @@
+//! # Rock-Paper-Scissors
+//!
+//! Demo game implementation. Rock-Paper-Scissors is a simultaneous-move zero-sum game
+//! where players choose from three actions. Used as a simple test case.
+
 use std::cmp::Ordering;
 use crate::utils::*;
 // ---------- Demo Game: Rock-Paper-Scissors (sequential, perfect info) ----------

@@ -1,8 +1,17 @@
+//! # Core Types and Traits for Game Theory
+//!
+//! This module defines the fundamental traits and types used throughout the library:
+//! - **Game trait**: Defines game structure, state, actions, and traces
+//! - **Player enum**: Represents game players (P1, P2, Chance)
+//! - **Type aliases**: Reward, Probability, Strategy, Counterfactual regrets
+//! - **Configuration constants**: Solver tuning parameters
+
 use std::fmt::{Debug};
 use std::hash::Hash;
+use std::path::PathBuf;
 
 // ---------- Tune-ables ---------- // 
-pub const SOLVE_TIME_SECS: f64 = 10.0;  // How long the bot is allowed to spend developing strat
+pub const SOLVE_TIME_SECS: f64 = 1.0;  // How long the bot is allowed to spend developing strat
 pub const MIN_INFO_SIZE: usize = 64;  // What root history size the bot should sample to
 pub const MAX_SUPPORT: usize = 3;  // (not currently used) number of top actions to consider
 
@@ -37,7 +46,7 @@ impl<T: Clone + Eq + Hash + Debug> ActionI for T {}  // for some reason rust wan
 /// Properities we want to all Traces to have
 pub trait TraceI: Clone + Eq + Hash + Debug + Default + PartialOrd  {} // see Game trait fo rmore details
 
-pub trait GameSolver<G: Game>: Default {
+pub trait GameSolver<G: Game>: Default + Clone {
     fn score_position(&self, game: &G::State, player: Player) -> Reward;
     fn guess_strategy(&self, game: &G::State, player: Player) -> Strategy;
     fn infer(&mut self, game: &G::State, player: Player) -> (Reward, Strategy) {
@@ -48,6 +57,7 @@ pub trait GameSolver<G: Game>: Default {
 
 // Default dummy solver for games that don't have a neural network solver
 #[derive(Default)]
+#[derive(Clone)]
 pub struct DummySolver;
 
 impl<G: Game> GameSolver<G> for DummySolver {
@@ -61,10 +71,18 @@ impl<G: Game> GameSolver<G> for DummySolver {
         // No-op for dummy solver
     }
 }
-} // Marker trait for solvers
+
+impl SaveModel for DummySolver {
+    fn save_model<P: Into<PathBuf>>(&self, _path: P) -> Result<(), burn::record::RecorderError> {
+        // No-op: DummySolver has no model to save
+        Ok(())
+    }
+}
+// Marker trait for solvers
 
 /// Default no-op solver for games without specialized neural networks
 #[derive(Default)]
+#[derive(Clone)]
 pub struct NoOpSolver;
 
 impl<G: Game> GameSolver<G> for NoOpSolver {
@@ -137,4 +155,9 @@ pub trait Game: Sized + Clone + Debug + Hash {
         let villan_trace = self.trace(villan);
         (hero_trace, villan_trace)
     }
+}
+
+/// Optional capability for solvers that can persist a learned model.
+pub trait SaveModel {
+    fn save_model<P: Into<PathBuf>>(&self, path: P) -> Result<(), burn::record::RecorderError>;
 }

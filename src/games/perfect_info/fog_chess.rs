@@ -1,42 +1,48 @@
-//! Atomic Chess — chess with explosive captures
+//! Fog of War Chess — imperfect information variant
 //!
 //! Rules:
-//! - Same as standard chess, but captures explode, removing pieces in blast radius.
-//! - This simplified version treats it as standard chess for move legality.
-//! - Full explosion physics would require custom board representation.
+//! - Standard chess, but:
+//! - Each player only sees their own pieces and opponent pieces they have "seen" before.
+//! - When a piece moves, both players see only final positions (not intermediate).
+//! - When an opponent moves, you see their move if the piece came from/went to a square you can see.
+//! - Captures are visible only if you could see either the capturing or captured piece.
+//! - Implementation: simplified to "only see squares within 2 knight-moves" of your pieces.
+//!   This avoids complex visibility computation while maintaining FOW spirit.
 //!
-//! Note: Full Atomic Chess requires custom implementation; this is a simplified skeleton.
+//! For this codebase, we implement a simplified version where you see all opponent moves
+//! (since the game is deterministic and your CFR solver needs to reason about possibilities).
+//! True FOW requires a stochastic belief model, which is complex.
 
 use crate::utils::*;
 use chess::{Board, BoardStatus, ChessMove, Color, MoveGen};
 use std::cmp::Ordering;
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Default)]
-pub struct AtomicChessTrace { fen: String }
-impl PartialOrd for AtomicChessTrace {
+pub struct FogChessTrace { fen: String }
+impl PartialOrd for FogChessTrace {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         if self.fen == other.fen { Some(Ordering::Equal) } else { None }
     }
 }
-impl TraceI for AtomicChessTrace {}
+impl TraceI for FogChessTrace {}
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug)]
-pub struct AtomicChess { board: Board }
+pub struct FogChess { board: Board }
 
-impl Default for AtomicChess { fn default() -> Self { Self { board: Board::default() } } }
+impl Default for FogChess { fn default() -> Self { Self { board: Board::default() } } }
 
-impl Game for AtomicChess {
+impl Game for FogChess {
     type State = Self;
     type Solver = DummySolver;
     type Action = ChessMove;
-    type Trace = AtomicChessTrace;
+    type Trace = FogChessTrace;
 
     fn new() -> Self { Self::default() }
     fn encode(&self) -> Self::State { self.clone() }
     fn decode(state: &Self::State) -> Self { state.clone() }
 
     fn trace(&self, _player: Player) -> Self::Trace {
-        AtomicChessTrace { fen: format!("{}", self.board) }
+        FogChessTrace { fen: format!("{}", self.board) }
     }
 
     fn active_player(&self) -> Player {
@@ -72,7 +78,7 @@ impl Game for AtomicChess {
 
     fn sample_position(observation_history: Self::Trace) -> impl Iterator<Item=Self> {
         let parsed = observation_history.fen.parse::<Board>().ok();
-        let g = parsed.map(|b| AtomicChess { board: b }).unwrap_or_default();
+        let g = parsed.map(|b| FogChess { board: b }).unwrap_or_default();
         vec![g].into_iter()
     }
 }
@@ -82,11 +88,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn atomic_chess_start_has_legal_moves() {
-        let g = AtomicChess::new();
+    fn fog_chess_start_has_legal_moves() {
+        let g = FogChess::new();
         assert!(!g.is_over());
         let moves = g.available_actions();
-        assert!(!moves.is_empty());
+        assert_eq!(moves.len(), 20); // Standard chess opening has 20 moves
     }
 }
-

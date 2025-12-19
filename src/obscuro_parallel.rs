@@ -1,3 +1,11 @@
+//! # Parallel Game Solving
+//!
+//! Multi-threaded implementation of the Obscuro solver for faster game exploration.
+//! Distributes game tree exploration across CPU cores with thread-safe synchronization.
+//!
+//! Uses unsafe code to enable parallel search within a single position.
+//! The main safety concerns are atomic state sharing and thread-safe history access.
+
 /// Fully parallelized Obscuro implementation using unsafe code for performance
 /// 
 /// # Safety

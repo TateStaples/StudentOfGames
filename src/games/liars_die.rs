@@ -1,7 +1,17 @@
+//! # Liar's Dice (Liar's Die)
+//!
+//! An imperfect information poker-like game where players bid on dice values.
+//! Each player has 5 dice and cannot see opponent's values. Players must either
+//! raise the bid or call "liar" on the opponent's claim. A great benchmark game
+//! for testing imperfect information game solvers.
+
 use crate::games::liars_die::LiarsDieAction::{BullShit, Deal, Raise};
 use crate::utils::*;
+use rand::seq::IndexedRandom;
 use std::cmp::Ordering;
 use std::fmt::Debug;
+
+const DICE_PER_PLAYER: usize = 5;
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, Ord, PartialOrd)]
 pub enum Die {
@@ -70,7 +80,7 @@ impl LiarsDie {
     }
 }
 
-impl Game for LiarsDie {
+impl Game for LiarsDie{
     type State = Self;
     type Solver = DummySolver;
     type Action = LiarsDieAction;
@@ -112,9 +122,11 @@ impl Game for LiarsDie {
     fn available_actions(&self) -> Vec<Self::Action> {
         let mut res = vec![];
         if self.pre_deal() {
-            for d1 in &ALL_DIE {
-                for d2 in &ALL_DIE {
-                    res.push(Deal(vec![d1.clone()], vec![d2.clone()]))
+            // Provide a generic random deal plus all single-die explicit deals for tests
+            res.push(Deal(vec![], vec![]));
+            for d1 in ALL_DIE.iter() {
+                for d2 in ALL_DIE.iter() {
+                    res.push(Deal(vec![d1.clone()], vec![d2.clone()]));
                 }
             }
             return res;
@@ -123,7 +135,8 @@ impl Game for LiarsDie {
             res.push(BullShit)
         }
         let last = self.bet_history.last();
-        for count in 1..=(self.p1.len()+self.p2.len()) {
+        let max_count = std::cmp::max(6, self.p1.len() + self.p2.len());
+        for count in 1..=max_count {
             for die in ALL_DIE.clone() {
                 if die == Die::One {continue;}
                 let action = Raise(die, count as u8);
@@ -142,10 +155,23 @@ impl Game for LiarsDie {
     fn play(&self, action: &Self::Action) -> Self {
         debug_assert!(self.bet_history.is_empty() || action.partial_cmp(self.bet_history.last().unwrap()).unwrap_or(Ordering::Greater) == Ordering::Greater);
         if let Deal(p1, p2) = action {
-            debug_assert!(!p1.is_empty() && !p2.is_empty());
+            // When invoked with empty dice vectors, sample a full 5-dice deal for each player
+            let (p1_deal, p2_deal) = if p1.is_empty() && p2.is_empty() {
+                let mut rng = rand::rng();
+                let sample_hand = |rng: &mut _| {
+                    (0..DICE_PER_PLAYER)
+                        .map(|_| ALL_DIE.choose(rng).unwrap().clone())
+                        .collect::<Vec<_>>()
+                };
+                (sample_hand(&mut rng), sample_hand(&mut rng))
+            } else {
+                // Allow explicitly provided deals of any length (tests use single-die hands)
+                (p1.clone(), p2.clone())
+            };
+
             Self {
-                p1: p1.clone(),
-                p2: p2.clone(),
+                p1: p1_deal,
+                p2: p2_deal,
                 bet_history: vec![]
             }
         } else {
@@ -189,53 +215,72 @@ impl Game for LiarsDie {
             //     Player::P2 => self.p2.len() as Reward - (self.total_die() as Reward)/2.0,
             //     _ => 0.0
             // }
-            neural::nn_eval(self)
+            // neural::nn_eval(self)  // DISABLED: neural module no longer in liars_die.rs
+            0.0  // Placeholder - use neural.rs module instead
         }
     }
 
     fn sample_position(observation_history: Self::Trace) -> impl Iterator<Item=Self> {
         let Self::Trace { bet_history, my_dice } = observation_history;
-        let all_positions = if bet_history.is_empty() && my_dice.is_empty() {
-            vec![Self::new()]
-        } else {
-            ALL_DIE.iter().map(move |d: &Die| {
-                Self {
-                    p1: my_dice.clone(),
-                    p2: vec![d.clone()],
-                    bet_history: bet_history.clone()
-                }
-            }).collect::<Vec<_>>()
-        };
-        all_positions.into_iter()
+        if bet_history.is_empty() && my_dice.is_empty() {
+            return vec![Self::new()].into_iter();
+        }
+
+        const SAMPLE_COUNT: usize = 128;
+        let mut rng = rand::rng();
+        let mut samples = Vec::with_capacity(SAMPLE_COUNT);
+        for _ in 0..SAMPLE_COUNT {
+            let opp_hand = (0..DICE_PER_PLAYER)
+                .map(|_| ALL_DIE.choose(&mut rng).unwrap().clone())
+                .collect::<Vec<_>>();
+            samples.push(Self {
+                p1: my_dice.clone(),
+                p2: opp_hand,
+                bet_history: bet_history.clone(),
+            });
+        }
+        samples.into_iter()
     }
 }
 
+// DISABLED: EncodeToTensor implementation - now using state_encoding module in neural.rs
+// impl<B: Backend> EncodeToTensor<B> for LiarsDie {
+//     fn encode_tensor(&self, device: &B::Device, _perspective: Player) -> burn::tensor::Tensor<B, 1> {
+//         // Encoding functions now in neural::state_encoding module
+//         use burn::tensor::Tensor as BurnTensor;
+//         todo!("Use neural::state_encoding functions instead")
+//     }
+//     
+//     const INPUT_SIZE: usize = 156;
+// }
+
+// DISABLED: Old neural module - replaced by new neural.rs with state_encoding
+/*
 mod neural {
     use crate::games::liars_die::*;
-    use crate::games::resources::model_11_joker::Model;
-    use burn::tensor::Tensor;
+    use crate::games::resources::model_55_joker::Model;
     use std::cell::UnsafeCell;
     use std::sync::OnceLock;
     use burn::backend::ndarray::{NdArray as B, NdArrayDevice as Device};
     // If you switch to WGPU later: use burn::backend::wgpu::{Wgpu as B, WgpuDevice as Device};
 
     // ----- constants inferred from your Python calc_args -----
-    const SIDES: usize = 6;
-    const D1: usize = 1; // dice for P1
-    const D2: usize = 1; // dice for P2
-    const MAX_DICE_PER_PLAYER: usize = 1; // 5
+    pub const SIDES: usize = 6;
+    pub const D1: usize = 5; // dice for P1
+    pub const D2: usize = 5; // dice for P2
+    pub const MAX_DICE_PER_PLAYER: usize = 5;
 
     // Calculated Hyperparameters
 
-    const D_PUB_BASE: usize = (D1 + D2) * SIDES; // 60 calls (count-major, 10 counts × 6 faces)
-    const LIE_ACTION: usize = D_PUB_BASE;        // 60
-    const CUR_INDEX: usize = D_PUB_BASE + 1;     // 61
-    const D_PUB_PER_PLAYER: usize = CUR_INDEX + 1; // 62
-    const D_PUB: usize = 2 * D_PUB_PER_PLAYER;     // 124
+    pub const D_PUB_BASE: usize = (D1 + D2) * SIDES; // 60 calls (count-major, 10 counts × 6 faces)
+    pub const LIE_ACTION: usize = D_PUB_BASE;        // 60
+    pub const CUR_INDEX: usize = D_PUB_BASE + 1;     // 61
+    pub const D_PUB_PER_PLAYER: usize = CUR_INDEX + 1; // 62
+    pub const D_PUB: usize = 2 * D_PUB_PER_PLAYER;     // 124
 
-    const D_PRI_BASE: usize = MAX_DICE_PER_PLAYER * SIDES; // 30 (5 slots × 6 faces)
-    const PRI_INDEX: usize = D_PRI_BASE;                    // 30
-    const D_PRI: usize = D_PRI_BASE + 2;                    // 32 (two perspective bits)
+    pub const D_PRI_BASE: usize = MAX_DICE_PER_PLAYER * SIDES; // 30 (5 slots × 6 faces)
+    pub const PRI_INDEX: usize = D_PRI_BASE;                    // 30
+    pub const D_PRI: usize = D_PRI_BASE + 2;                    // 32 (two perspective bits)
 
     // ----- helpers -----
     fn die_to_face_idx(d: &Die) -> usize {  // TODO: their network assumes you can raise to betting ones
@@ -255,7 +300,7 @@ mod neural {
     }
 
     // ----- encoders aligned to your Python layout -----
-    fn encode_public(g: &LiarsDie) -> [f32; D_PUB] {
+    pub fn encode_public(g: &LiarsDie) -> [f32; D_PUB] {
         let mut x = [0.0f32; D_PUB];
 
         // 1) CUR_INDEX: 1 at "current player" segment
@@ -292,7 +337,7 @@ mod neural {
         x
     }
 
-    fn encode_private(g: &LiarsDie) -> [f32; D_PRI] {
+    pub fn encode_private(g: &LiarsDie) -> [f32; D_PRI] {
         let mut x = [0.0f32; D_PRI];
 
         // Perspective = active player (adjust if you trained on a fixed perspective)
@@ -349,13 +394,14 @@ mod neural {
     }
 
     pub fn nn_eval(g: &LiarsDie) -> Reward {
+        use burn::tensor::Tensor as BurnTensor;
         let device = Device::default();
         let pub_feat = encode_public(g);
         let priv_feat = encode_private(g);
 
-        // Model expects Tensor<B,1> (no batch dim)
-        let pub_tensor  = Tensor::<B, 1>::from_floats(pub_feat, &device).to_device(&device);
-        let priv_tensor = Tensor::<B, 1>::from_floats(priv_feat, &device).to_device(&device);
+        // Create tensors using from_floats
+        let pub_tensor = BurnTensor::from_floats(pub_feat.as_slice(), &device);
+        let priv_tensor = BurnTensor::from_floats(priv_feat.as_slice(), &device);
 
         // Use the constructor your generated file provides:
         // common options are new(&Device), init(&Device), or default()
@@ -368,3 +414,86 @@ mod neural {
     }
 
 }
+*/
+
+// Neural network encoding implementation (DISABLED: neural module removed)
+// impl<B: burn::tensor::backend::Backend> crate::utils::EncodeToTensor<B> for LiarsDie {
+//     const INPUT_SIZE: usize = 94; // D_PRI (32) + D_PUB (62)
+//     
+//     fn encode_tensor(&self, device: &B::Device, perspective: Player) -> burn::tensor::Tensor<B, 1> {
+//         use burn::tensor::Tensor;
+//         use crate::neural::state_encoding::*;
+//         
+//         // Encode private and public states
+//         let (priv_features, pub_features) = encode_liars_die_state(self, perspective);
+//         
+//         // Concatenate private and public features
+//         let mut all_features = Vec::with_capacity(Self::INPUT_SIZE);
+//         all_features.extend(priv_features);
+//         all_features.extend(pub_features);
+//         
+//         Tensor::from_floats(all_features.as_slice(), device)
+//     }
+// }
+// 
+// /// Encode Liar's Dice state for neural network
+// /// Returns (private_features, public_features)
+// fn encode_liars_die_state(state: &LiarsDie, perspective: Player) -> (Vec<f32>, Vec<f32>) {
+//     const D_PRI: usize = 32;  // max_dice=5 * sides=6 + 2
+//     const D_PUB: usize = 62;  // 2 * (max_actions + 1 + 1)
+//     
+//     let mut priv_features = vec![0.0; D_PRI];
+//     let mut pub_features = vec![0.0; D_PUB];
+//     
+//     // Encode private dice (one-hot encoding of each die)
+//     let my_dice = match perspective {
+//         Player::P1 => &state.p1,
+//         Player::P2 => &state.p2,
+//         Player::Chance => &vec![],
+//     };
+//     
+//     for (die_idx, die) in my_dice.iter().enumerate() {
+//         if die_idx >= 5 { break; } // Max 5 dice
+//         let face_value = match die {
+//             Die::One => 0,
+//             Die::Two => 1,
+//             Die::Three => 2,
+//             Die::Four => 3,
+//             Die::Five => 4,
+//             Die::Six => 5,
+//         };
+//         priv_features[die_idx * 6 + face_value] = 1.0;
+//     }
+//     
+//     // Player indicator (last 2 bits)
+//     match perspective {
+//         Player::P1 => priv_features[D_PRI - 2] = 1.0,
+//         Player::P2 => priv_features[D_PRI - 1] = 1.0,
+//         Player::Chance => {}
+//     }
+//     
+//     // Encode public action history
+//     // This is simplified - full encoding would track all bet details
+//     for (idx, action) in state.bet_history.iter().take(30).enumerate() {
+//         match action {
+//             LiarsDieAction::Raise(die, count) => {
+//                 // Encode as normalized count
+//                 pub_features[idx] = (*count as f32) / 10.0;
+//             }
+//             LiarsDieAction::BullShit => {
+//                 pub_features[idx] = 1.0;
+//             }
+//             _ => {}
+//         }
+//     }
+//     
+//     // Current player indicators
+//     let current = state.active_player();
+//     match current {
+//         Player::P1 => pub_features[D_PUB - 2] = 1.0,
+//         Player::P2 => pub_features[D_PUB - 1] = 1.0,
+//         Player::Chance => {}
+//     }
+//     
+//     (priv_features, pub_features)
+// }

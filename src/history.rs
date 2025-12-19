@@ -1,3 +1,12 @@
+//! # Game Tree History
+//!
+//! Represents nodes in the game tree exploration, tracking:
+//! - **Terminal states**: Game outcomes and payoffs
+//! - **Visited nodes**: Explored states with reach probabilities
+//! - **Expanded nodes**: Nodes with full child exploration and infosets
+//!
+//! Used for recursive game solving and counterfactual value computation.
+
 use crate::info::*;
 use crate::policy::Policy;
 use crate::utils::*;
@@ -14,6 +23,26 @@ pub enum History<G: Game> {
     Visited { state: G::State, payoff: Reward, reach: HashMap<Player, Probability> },
     Expanded { info: InfoPtr<G::Action, G::Trace>, reach: HashMap<Player, Probability>, 
         children: Vec<(G::Action, History<G>)>, player: Player, villan_trace: G::Trace },
+}
+
+impl<G: Game> Clone for History<G> {
+    fn clone(&self) -> Self {
+        match self {
+            History::Terminal { payoff } => History::Terminal { payoff: *payoff },
+            History::Visited { state, payoff, reach } => History::Visited {
+                state: state.clone(),
+                payoff: *payoff,
+                reach: reach.clone(),
+            },
+            History::Expanded { info, reach, children, player, villan_trace } => History::Expanded {
+                info: info.clone(),
+                reach: reach.clone(),
+                children: children.clone(),
+                player: *player,
+                villan_trace: villan_trace.clone(),
+            },
+        }
+    }
 }
 
 impl<G: Game> History<G> {
